@@ -68,7 +68,21 @@ auth.post('/login', async (c) => {
   return c.json({ data: { id: row.id, username: row.username, displayName: row.display_name, role: row.role, status: row.status } });
 });
 
-auth.get('/me', requireAuth, async (c) => c.json({ data: c.get('user') }));
+auth.get('/me', requireAuth, async (c) => {
+  const user = c.get('user');
+  let profile: Record<string, unknown> = {};
+  if (user.role === 'TEACHER') {
+    const row = await c.env.DB.prepare('SELECT subject FROM teacher_profiles WHERE user_id = ?').bind(user.id).first();
+    profile = row ?? {};
+  }
+  if (user.role === 'STUDENT') {
+    const row = await c.env.DB.prepare(
+      'SELECT school, grade, remaining_hundredths FROM student_profiles WHERE user_id = ?',
+    ).bind(user.id).first();
+    profile = row ?? {};
+  }
+  return c.json({ data: { ...user, ...profile } });
+});
 
 auth.post('/logout', requireAuth, async (c) => {
   await c.env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(c.get('sessionTokenHash')).run();

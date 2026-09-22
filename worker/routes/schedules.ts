@@ -96,6 +96,15 @@ schedules.get('/export-data', async (c) => {
   const offset = Math.max(0, Number(c.req.query('offset') ?? 0));
   const limit = Math.min(1000, Math.max(1, Number(c.req.query('limit') ?? 500)));
   const where = buildWhere(user, filters);
+  const idsText = c.req.query('ids');
+  if (idsText) {
+    const ids = [...new Set(idsText.split(',').map(Number))];
+    if (ids.length === 0 || ids.length > 80 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+      throw new AppError(422, 'INVALID_IDS', '导出选中记录的 ID 无效');
+    }
+    where.sql += `${where.sql ? ' AND' : 'WHERE'} s.id IN (${ids.map(() => '?').join(',')})`;
+    where.params.push(...ids);
+  }
   const result = await c.env.DB.prepare(
     `${scheduleSelect(where.sql)} ORDER BY s.class_date ASC, s.start_time ASC, s.id ASC LIMIT ? OFFSET ?`,
   ).bind(...where.params, limit, offset).all();
@@ -201,4 +210,3 @@ schedules.post('/bulk-delete', requireRole('ADMIN'), async (c) => {
   const result = await c.env.DB.prepare(`DELETE FROM schedules ${where.sql.replaceAll('s.', '')}`).bind(...where.params).run();
   return c.json({ data: { deleted: result.meta.changes ?? 0 } });
 });
-

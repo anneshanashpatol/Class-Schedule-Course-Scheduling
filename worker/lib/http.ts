@@ -25,6 +25,9 @@ export function jsonError(c: Context, error: unknown) {
   if (message.includes('SCHEDULE_CONFLICT')) {
     return c.json({ error: { code: 'SCHEDULE_CONFLICT', message: '教师、学生或教室在该时间已有排课' } }, 409);
   }
+  if (message.includes('VERSION_CONFLICT')) {
+    return c.json({ error: { code: 'VERSION_CONFLICT', message: '排课已被其他人修改，请刷新后重试' } }, 409);
+  }
   if (message.includes('COMPLETED_SCHEDULE_LOCKED')) {
     return c.json({ error: { code: 'COMPLETED_SCHEDULE_LOCKED', message: '已完课课程需先取消完课才能修改学生和时间' } }, 409);
   }

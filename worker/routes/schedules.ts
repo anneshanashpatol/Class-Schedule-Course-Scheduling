@@ -13,13 +13,18 @@ const validDate = (value: string) => datePattern.test(value)
 
 const scheduleInput = z.object({
   teacherId: z.number().int().positive().optional(),
-  studentId: z.number().int().positive(),
+  studentIds: z.array(z.number().int().positive()).min(1).max(50).optional(),
+  studentId: z.number().int().positive().optional(),
   subject: z.string().trim().min(1).max(100),
   classDate: z.string().refine(validDate, '日期无效'),
   startTime: z.string().regex(timePattern),
   endTime: z.string().regex(timePattern),
   classroom: z.string().trim().max(100).default(''),
   version: z.number().int().positive().optional(),
+}).superRefine((value, context) => {
+  if (!value.studentId && (!value.studentIds || value.studentIds.length === 0)) {
+    context.addIssue({ code: 'custom', path: ['studentIds'], message: '请至少选择一名学生' });
+  }
 });
 
 const filterSchema = z.object({
@@ -33,6 +38,20 @@ const filterSchema = z.object({
 });
 
 type Filters = z.infer<typeof filterSchema>;
+type ScheduleRow = Record<string, unknown> & {
+  id: number;
+  is_completed: number;
+  student_ids_json: string;
+  student_names_json: string;
+};
+
+function selectedStudentIds(input: z.infer<typeof scheduleInput>) {
+  return [...new Set(input.studentIds?.length ? input.studentIds : [input.studentId!])];
+}
+
+function sameMembers(left: number[], right: number[]) {
+  return left.length === right.length && left.every((id) => right.includes(id));
+}
 
 function escapeLike(value: string) {
   return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
@@ -42,9 +61,15 @@ function buildWhere(user: AuthUser, filters: Filters, alias = 's') {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (user.role === 'TEACHER') { clauses.push(`${alias}.teacher_id = ?`); params.push(user.id); }
-  if (user.role === 'STUDENT') { clauses.push(`${alias}.student_id = ?`); params.push(user.id); }
+  if (user.role === 'STUDENT') {
+    clauses.push(`EXISTS (SELECT 1 FROM schedule_students scoped_students WHERE scoped_students.schedule_id = ${alias}.id AND scoped_students.student_id = ?)`);
+    params.push(user.id);
+  }
   if (user.role === 'ADMIN' && filters.teacherId) { clauses.push(`${alias}.teacher_id = ?`); params.push(filters.teacherId); }
-  if (user.role !== 'STUDENT' && filters.studentId) { clauses.push(`${alias}.student_id = ?`); params.push(filters.studentId); }
+  if (user.role !== 'STUDENT' && filters.studentId) {
+    clauses.push(`EXISTS (SELECT 1 FROM schedule_students filtered_students WHERE filtered_students.schedule_id = ${alias}.id AND filtered_students.student_id = ?)`);
+    params.push(filters.studentId);
+  }
   if (filters.dateFrom) { clauses.push(`${alias}.class_date >= ?`); params.push(filters.dateFrom); }
   if (filters.dateTo) { clauses.push(`${alias}.class_date <= ?`); params.push(filters.dateTo); }
   if (filters.subject) { clauses.push(`${alias}.subject LIKE ? ESCAPE '\\'`); params.push(`%${escapeLike(filters.subject)}%`); }
@@ -72,17 +97,44 @@ function nonnegativeInteger(value: string | undefined, fallback: number) {
 function scheduleSelect(where: string) {
   return `SELECT s.id, s.teacher_id, s.student_id, s.subject, s.class_date, s.start_time, s.end_time,
     s.lesson_hundredths, s.classroom, s.is_completed, s.version, s.created_at, s.updated_at,
-    teacher.display_name AS teacher_name, student.display_name AS student_name
+    teacher.display_name AS teacher_name, primary_student.display_name AS student_name,
+    COALESCE((SELECT json_group_array(student_id) FROM (
+      SELECT ss.student_id FROM schedule_students ss WHERE ss.schedule_id = s.id ORDER BY ss.position, ss.student_id
+    )), '[]') AS student_ids_json,
+    COALESCE((SELECT json_group_array(student_name) FROM (
+      SELECT member.display_name AS student_name FROM schedule_students ss
+      JOIN users member ON member.id = ss.student_id
+      WHERE ss.schedule_id = s.id ORDER BY ss.position, ss.student_id
+    )), '[]') AS student_names_json
     FROM schedules s
     JOIN users teacher ON teacher.id = s.teacher_id
-    JOIN users student ON student.id = s.student_id
+    JOIN users primary_student ON primary_student.id = s.student_id
     ${where}`;
 }
 
+function normalizeSchedule(row: ScheduleRow) {
+  const { student_ids_json, student_names_json, ...rest } = row;
+  return {
+    ...rest,
+    student_ids: JSON.parse(student_ids_json) as number[],
+    student_names: JSON.parse(student_names_json) as string[],
+  };
+}
+
 async function getScopedSchedule(db: D1Database, user: AuthUser, id: number) {
-  const scope = user.role === 'ADMIN' ? '' : user.role === 'TEACHER' ? 'AND s.teacher_id = ?' : 'AND s.student_id = ?';
-  const statement = db.prepare(`${scheduleSelect(`WHERE s.id = ? ${scope}`)}`);
-  return (scope ? statement.bind(id, user.id) : statement.bind(id)).first<Record<string, unknown>>();
+  const filters = buildWhere(user, {});
+  const idClause = filters.sql ? `${filters.sql} AND s.id = ?` : 'WHERE s.id = ?';
+  const row = await db.prepare(scheduleSelect(idClause)).bind(...filters.params, id).first<ScheduleRow>();
+  return row ? normalizeSchedule(row) : null;
+}
+
+function studentInsert(db: D1Database, scheduleIdSql: string, ids: number[], scheduleId?: number) {
+  const statement = db.prepare(
+    `INSERT INTO schedule_students (schedule_id, student_id, position) VALUES ${ids.map((_, index) => `(${scheduleIdSql}, ?, ${index})`).join(', ')}`,
+  );
+  return scheduleId === undefined
+    ? statement.bind(...ids)
+    : statement.bind(...ids.flatMap((studentId) => [scheduleId, studentId]));
 }
 
 export const schedules = new Hono<AppBindings>();
@@ -99,8 +151,8 @@ schedules.get('/', async (c) => {
     .bind(...where.params).first<{ total: number }>();
   const result = await c.env.DB.prepare(
     `${scheduleSelect(where.sql)} ORDER BY s.class_date DESC, s.start_time ASC, s.id ASC LIMIT ? OFFSET ?`,
-  ).bind(...where.params, pageSize, (page - 1) * pageSize).all();
-  return c.json({ data: result.results, meta: { page, pageSize, total: count?.total ?? 0 } });
+  ).bind(...where.params, pageSize, (page - 1) * pageSize).all<ScheduleRow>();
+  return c.json({ data: result.results.map(normalizeSchedule), meta: { page, pageSize, total: count?.total ?? 0 } });
 });
 
 schedules.get('/export-data', async (c) => {
@@ -120,12 +172,13 @@ schedules.get('/export-data', async (c) => {
   }
   const result = await c.env.DB.prepare(
     `${scheduleSelect(where.sql)} ORDER BY s.class_date ASC, s.start_time ASC, s.id ASC LIMIT ? OFFSET ?`,
-  ).bind(...where.params, limit, offset).all();
-  return c.json({ data: result.results, meta: { offset, limit, hasMore: result.results.length === limit } });
+  ).bind(...where.params, limit, offset).all<ScheduleRow>();
+  return c.json({ data: result.results.map(normalizeSchedule), meta: { offset, limit, hasMore: result.results.length === limit } });
 });
 
 schedules.get('/:id', async (c) => {
   const id = Number(c.req.param('id'));
+  if (!Number.isSafeInteger(id)) throw new AppError(422, 'VALIDATION_ERROR', '排课 ID 无效');
   const row = await getScopedSchedule(c.env.DB, c.get('user'), id);
   if (!row) throw new AppError(404, 'SCHEDULE_NOT_FOUND', '排课不存在');
   return c.json({ data: row });
@@ -137,38 +190,60 @@ schedules.post('/', requireRole('ADMIN', 'TEACHER'), async (c) => {
   const user = c.get('user');
   const teacherId = user.role === 'TEACHER' ? user.id : input.data.teacherId;
   if (!teacherId) throw new AppError(422, 'TEACHER_REQUIRED', '请选择教师');
+  const studentIds = selectedStudentIds(input.data);
   const lessonHundredths = calculateLessonHundredths(input.data.startTime, input.data.endTime);
-  const result = await c.env.DB.prepare(
-    `INSERT INTO schedules
-      (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, classroom, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-  ).bind(
-    teacherId, input.data.studentId, input.data.subject, input.data.classDate,
-    input.data.startTime, input.data.endTime, lessonHundredths, input.data.classroom, user.id,
-  ).first<{ id: number }>();
-  return c.json({ data: { id: result?.id } }, 201);
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO schedules
+        (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, classroom, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      teacherId, studentIds[0], input.data.subject, input.data.classDate,
+      input.data.startTime, input.data.endTime, lessonHundredths, input.data.classroom, user.id,
+    ),
+    studentInsert(c.env.DB, 'last_insert_rowid()', studentIds),
+  ]);
+  return c.json({ data: { id: Number(results[0].meta.last_row_id), studentIds } }, 201);
 });
 
 schedules.patch('/:id', requireRole('ADMIN', 'TEACHER'), async (c) => {
   const id = Number(c.req.param('id'));
-  const input = scheduleInput.required({ version: true }).safeParse(await c.req.json());
-  if (!Number.isSafeInteger(id) || !input.success) throw new AppError(422, 'VALIDATION_ERROR', '排课信息有误');
+  const input = scheduleInput.safeParse(await c.req.json());
+  if (!Number.isSafeInteger(id) || !input.success || !input.data.version) {
+    throw new AppError(422, 'VALIDATION_ERROR', '排课信息有误', input.success ? undefined : input.error.flatten());
+  }
   const user = c.get('user');
   const existing = await getScopedSchedule(c.env.DB, user, id);
   if (!existing) throw new AppError(404, 'SCHEDULE_NOT_FOUND', '排课不存在');
   const teacherId = user.role === 'TEACHER' ? user.id : input.data.teacherId;
   if (!teacherId) throw new AppError(422, 'TEACHER_REQUIRED', '请选择教师');
+  const requestedStudentIds = selectedStudentIds(input.data);
+  const existingStudentIds = existing.student_ids as number[];
+  const membershipChanged = !sameMembers(existingStudentIds, requestedStudentIds);
+  if (membershipChanged && Boolean(existing.is_completed)) {
+    throw new AppError(409, 'COMPLETED_SCHEDULE_LOCKED', '已完课课程需先取消完课才能修改学生和时间');
+  }
+  const studentIds = membershipChanged ? requestedStudentIds : existingStudentIds;
   const lessonHundredths = calculateLessonHundredths(input.data.startTime, input.data.endTime);
-  const result = await c.env.DB.prepare(
+  const update = c.env.DB.prepare(
     `UPDATE schedules SET teacher_id = ?, student_id = ?, subject = ?, class_date = ?, start_time = ?,
-      end_time = ?, lesson_hundredths = ?, classroom = ?, version = version + 1, updated_at = datetime('now')
-     WHERE id = ? AND version = ?`,
+      end_time = ?, lesson_hundredths = ?, classroom = ?, version = ?, updated_at = datetime('now')
+     WHERE id = ?`,
   ).bind(
-    teacherId, input.data.studentId, input.data.subject, input.data.classDate, input.data.startTime,
-    input.data.endTime, lessonHundredths, input.data.classroom, id, input.data.version,
-  ).run();
-  if ((result.meta.changes ?? 0) === 0) throw new AppError(409, 'VERSION_CONFLICT', '排课已被其他人修改，请刷新后重试');
-  return c.json({ data: { success: true } });
+    teacherId, studentIds[0], input.data.subject, input.data.classDate, input.data.startTime,
+    input.data.endTime, lessonHundredths, input.data.classroom, input.data.version + 1, id,
+  );
+  const statements = membershipChanged
+    ? [
+      c.env.DB.prepare('DELETE FROM schedule_students WHERE schedule_id = ?').bind(id),
+      update,
+      studentInsert(c.env.DB, '?', studentIds, id),
+    ]
+    : [update];
+  const results = await c.env.DB.batch(statements);
+  const updateResult = results[membershipChanged ? 1 : 0];
+  if ((updateResult.meta.changes ?? 0) === 0) throw new AppError(409, 'VERSION_CONFLICT', '排课已被其他人修改，请刷新后重试');
+  return c.json({ data: await getScopedSchedule(c.env.DB, user, id) });
 });
 
 schedules.patch('/:id/completion', requireRole('ADMIN', 'TEACHER'), async (c) => {
@@ -192,6 +267,7 @@ schedules.patch('/:id/completion', requireRole('ADMIN', 'TEACHER'), async (c) =>
 
 schedules.delete('/:id', requireRole('ADMIN', 'TEACHER'), async (c) => {
   const id = Number(c.req.param('id'));
+  if (!Number.isSafeInteger(id)) throw new AppError(422, 'VALIDATION_ERROR', '排课 ID 无效');
   const user = c.get('user');
   const clause = user.role === 'TEACHER' ? 'AND teacher_id = ?' : '';
   const statement = c.env.DB.prepare(`DELETE FROM schedules WHERE id = ? ${clause}`);
@@ -216,11 +292,11 @@ schedules.post('/bulk-delete', requireRole('ADMIN'), async (c) => {
     return c.json({ data: { deleted: results.reduce((sum, result) => sum + (result.meta.changes ?? 0), 0) } });
   }
   const where = buildWhere(c.get('user'), input.data.filters);
-  const outerCondition = where.sql ? where.sql.replace(/^WHERE /, '').replaceAll('s.', '') : '1 = 1';
+  const outerCondition = where.sql ? where.sql.replace(/^WHERE /, '') : '1 = 1';
   const result = await c.env.DB.prepare(
-    `DELETE FROM schedules
+    `DELETE FROM schedules AS s
      WHERE (${outerCondition})
-       AND (SELECT COUNT(*) FROM schedules s ${where.sql}) = ?`,
+       AND (SELECT COUNT(*) FROM schedules counted ${where.sql.replaceAll('s.', 'counted.')}) = ?`,
   ).bind(...where.params, ...where.params, input.data.expectedCount).run();
   if (input.data.expectedCount === 0 || (result.meta.changes ?? 0) !== input.data.expectedCount) {
     const actual = await c.env.DB.prepare(`SELECT COUNT(*) AS total FROM schedules s ${where.sql}`)

@@ -14,8 +14,14 @@ const accounts = [
   ['e2e_admin', 'ADMIN'],
   ['e2e_王老师', 'TEACHER'],
   ['e2e_张三', 'STUDENT'],
+  ['e2e_李四', 'STUDENT'],
+  ['e2e_王五', 'STUDENT'],
+  ['e2e_赵六', 'STUDENT'],
+  ['e2e_待删除', 'STUDENT'],
 ];
 const values = accounts.map(([name, role]) => `('${name}', '${name}', '${passwordHash('e2e-pass-123')}', '${role}')`).join(',\n');
+const now = new Date();
+const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 const sql = `
 DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'e2e_%');
 DELETE FROM lesson_adjustments WHERE student_id IN (SELECT id FROM users WHERE username LIKE 'e2e_%');
@@ -26,6 +32,16 @@ DELETE FROM users WHERE username LIKE 'e2e_%';
 INSERT INTO users (username, display_name, password_hash, role) VALUES ${values};
 UPDATE teacher_profiles SET subject = '数学、物理' WHERE user_id = (SELECT id FROM users WHERE username = 'e2e_王老师');
 UPDATE student_profiles SET school = '青禾中学', grade = '初三', remaining_hundredths = 1000 WHERE user_id = (SELECT id FROM users WHERE username = 'e2e_张三');
+INSERT INTO schedules (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, classroom, created_by)
+SELECT teacher.id, primary_student.id, 'E2E历史课程', '${today}', '14:00', '15:30', 150, 'E2E-H201', admin.id
+FROM users teacher, users primary_student, users admin
+WHERE teacher.username = 'e2e_王老师' AND primary_student.username = 'e2e_张三' AND admin.username = 'e2e_admin';
+INSERT INTO schedule_students (schedule_id, student_id, position)
+SELECT schedule.id, student.id, 0 FROM schedules schedule, users student
+WHERE schedule.subject = 'E2E历史课程' AND student.username = 'e2e_张三';
+INSERT INTO schedule_students (schedule_id, student_id, position)
+SELECT schedule.id, student.id, 1 FROM schedules schedule, users student
+WHERE schedule.subject = 'E2E历史课程' AND student.username = 'e2e_待删除';
 `;
 const sqlFile = join(tmpdir(), `course-scheduler-e2e-${process.pid}.sql`);
 

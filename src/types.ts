@@ -8,6 +8,7 @@ export interface AuthUser {
   displayName: string;
   role: Role;
   status: UserStatus;
+  deleted_at?: string | null;
   subject?: string;
   school?: string;
   grade?: string;
@@ -18,8 +19,10 @@ export interface Schedule {
   id: number;
   teacher_id: number;
   student_id: number;
+  student_ids?: number[];
   teacher_name: string;
   student_name: string;
+  student_names?: string[];
   subject: string;
   class_date: string;
   start_time: string;
@@ -36,6 +39,7 @@ export interface UserRecord {
   display_name: string;
   role: Role;
   status: UserStatus;
+  deleted_at?: string | null;
   created_at: string;
   subject?: string;
   school?: string;

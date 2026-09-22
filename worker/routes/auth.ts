@@ -8,7 +8,7 @@ import type { AppBindings } from '../types';
 
 const credentialsSchema = z.object({
   username: z.string().trim().min(1, '请输入姓名').max(40),
-  password: z.string().min(8, '密码至少 8 位').max(128),
+  password: z.string().min(5, '密码至少 5 位').max(128),
 });
 
 const registerSchema = credentialsSchema.extend({
@@ -65,12 +65,12 @@ auth.post('/login', async (c) => {
   const input = credentialsSchema.safeParse(await c.req.json());
   if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '请输入姓名和密码');
   const row = await c.env.DB.prepare(
-    'SELECT id, username, display_name, password_hash, role, status FROM users WHERE username = ?',
+    'SELECT id, username, display_name, password_hash, role, status, deleted_at FROM users WHERE username = ?',
   ).bind(input.data.username).first<Record<string, string | number>>();
   if (!row || !(await verifyPassword(input.data.password, String(row.password_hash)))) {
     throw new AppError(401, 'INVALID_CREDENTIALS', '姓名或密码错误');
   }
-  if (row.status !== 'ACTIVE') throw new AppError(403, 'ACCOUNT_DISABLED', '账号已停用，请联系管理员');
+  if (row.status !== 'ACTIVE' || row.deleted_at) throw new AppError(403, 'ACCOUNT_DISABLED', '账号已停用，请联系管理员');
   await issueSession(c, Number(row.id));
   let profile: Record<string, unknown> = {};
   if (row.role === 'TEACHER') {
@@ -112,9 +112,9 @@ auth.post('/logout', requireAuth, async (c) => {
 });
 
 auth.post('/change-password', requireAuth, async (c) => {
-  const schema = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(8).max(128) });
+  const schema = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(5).max(128) });
   const input = schema.safeParse(await c.req.json());
-  if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '新密码至少 8 位');
+  if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '新密码至少 5 位');
   const user = c.get('user');
   const row = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first<{ password_hash: string }>();
   if (!row || !(await verifyPassword(input.data.currentPassword, row.password_hash))) {

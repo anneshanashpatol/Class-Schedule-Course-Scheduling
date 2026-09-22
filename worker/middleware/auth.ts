@@ -11,6 +11,7 @@ type UserRow = {
   display_name: string;
   role: Role;
   status: 'ACTIVE' | 'DISABLED';
+  deleted_at: string | null;
   token_hash: string;
 };
 
@@ -19,11 +20,11 @@ export const requireAuth = createMiddleware<AppBindings>(async (c, next) => {
   if (!token) throw new AppError(401, 'UNAUTHENTICATED', '请先登录');
   const tokenHash = await sha256(token);
   const row = await c.env.DB.prepare(
-    `SELECT u.id, u.username, u.display_name, u.role, u.status, s.token_hash
+    `SELECT u.id, u.username, u.display_name, u.role, u.status, u.deleted_at, s.token_hash
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > datetime('now')`,
   ).bind(tokenHash).first<UserRow>();
-  if (!row || row.status !== 'ACTIVE') throw new AppError(401, 'SESSION_EXPIRED', '登录已失效，请重新登录');
+  if (!row || row.status !== 'ACTIVE' || row.deleted_at) throw new AppError(401, 'SESSION_EXPIRED', '登录已失效，请重新登录');
   const user: AuthUser = {
     id: row.id,
     username: row.username,
@@ -54,4 +55,3 @@ export const protectWrites = createMiddleware<AppBindings>(async (c, next) => {
   }
   await next();
 });
-

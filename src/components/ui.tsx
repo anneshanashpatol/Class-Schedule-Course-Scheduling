@@ -25,7 +25,7 @@ export function Dialog({ title, open, onClose, children, wide = false }: { title
 
 export function Notice({ error, success }: { error?: string; success?: string }) {
   if (!error && !success) return null;
-  return <div role="status" className={`notice ${error ? 'notice--error' : 'notice--success'}`}>{error ?? success}</div>;
+  return <div role="status" className={`notice ${error ? 'notice--error' : 'notice--success'}`}>{error || success}</div>;
 }
 
 export function EmptyState({ title, text, action }: { title: string; text: string; action?: ReactNode }) {

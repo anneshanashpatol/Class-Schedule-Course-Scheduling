@@ -7,10 +7,18 @@ async function seedPeople() {
     env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (2, '王老师', '王老师', 'x', 'TEACHER')"),
     env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (3, '张三', '张三', 'x', 'STUDENT')"),
     env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (4, '李老师', '李老师', 'x', 'TEACHER')"),
+    env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (5, '李四', '李四', 'x', 'STUDENT')"),
     env.DB.prepare("UPDATE teacher_profiles SET subject = '数学' WHERE user_id = 2"),
     env.DB.prepare("UPDATE teacher_profiles SET subject = '英语' WHERE user_id = 4"),
     env.DB.prepare('UPDATE student_profiles SET remaining_hundredths = 1000 WHERE user_id = 3'),
+    env.DB.prepare('UPDATE student_profiles SET remaining_hundredths = 1000 WHERE user_id = 5'),
   ]);
+}
+
+async function addMembers(scheduleId: number, ...studentIds: number[]) {
+  await env.DB.batch(studentIds.map((studentId, position) => env.DB.prepare(
+    'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (?, ?, ?)',
+  ).bind(scheduleId, studentId, position)));
 }
 
 describe('D1 排课约束', () => {
@@ -20,11 +28,24 @@ describe('D1 排课约束', () => {
       `INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time,
        lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:30', 150, 1)`,
     ).run();
+    await addMembers(10, 3, 5);
     await env.DB.prepare('UPDATE schedules SET is_completed = 1, version = version + 1 WHERE id = 10').run();
     await env.DB.prepare('UPDATE schedules SET is_completed = 1, version = version + 1 WHERE id = 10').run();
-    expect((await env.DB.prepare('SELECT remaining_hundredths FROM student_profiles WHERE user_id = 3').first<{ remaining_hundredths: number }>())?.remaining_hundredths).toBe(850);
+    const completedBalances = await env.DB.prepare(
+      'SELECT user_id, remaining_hundredths FROM student_profiles WHERE user_id IN (3, 5) ORDER BY user_id',
+    ).all<{ user_id: number; remaining_hundredths: number }>();
+    expect(completedBalances.results).toEqual([
+      { user_id: 3, remaining_hundredths: 850 },
+      { user_id: 5, remaining_hundredths: 850 },
+    ]);
     await env.DB.prepare('UPDATE schedules SET is_completed = 0, version = version + 1 WHERE id = 10').run();
-    expect((await env.DB.prepare('SELECT remaining_hundredths FROM student_profiles WHERE user_id = 3').first<{ remaining_hundredths: number }>())?.remaining_hundredths).toBe(1000);
+    const restoredBalances = await env.DB.prepare(
+      'SELECT user_id, remaining_hundredths FROM student_profiles WHERE user_id IN (3, 5) ORDER BY user_id',
+    ).all<{ user_id: number; remaining_hundredths: number }>();
+    expect(restoredBalances.results).toEqual([
+      { user_id: 3, remaining_hundredths: 1000 },
+      { user_id: 5, remaining_hundredths: 1000 },
+    ]);
   });
 
   it('阻止重叠课程但允许首尾相接', async () => {
@@ -32,6 +53,8 @@ describe('D1 排课约束', () => {
     await env.DB.prepare(
       "INSERT INTO schedules (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
+    const firstId = Number((await env.DB.prepare('SELECT id FROM schedules ORDER BY id LIMIT 1').first<{ id: number }>())?.id);
+    await addMembers(firstId, 3);
     await expect(env.DB.prepare(
       "INSERT INTO schedules (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (2, 3, '数学', '2026-09-22', '09:59', '11:00', 102, 1)",
     ).run()).rejects.toThrow('SCHEDULE_CONFLICT');
@@ -45,9 +68,16 @@ describe('D1 排课约束', () => {
     await env.DB.prepare(
       "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
+    await addMembers(10, 3, 5);
     await env.DB.prepare('UPDATE schedules SET is_completed = 1 WHERE id = 10').run();
     await env.DB.prepare('DELETE FROM schedules WHERE id = 10').run();
-    expect((await env.DB.prepare('SELECT remaining_hundredths FROM student_profiles WHERE user_id = 3').first<{ remaining_hundredths: number }>())?.remaining_hundredths).toBe(900);
+    const balances = await env.DB.prepare(
+      'SELECT user_id, remaining_hundredths FROM student_profiles WHERE user_id IN (3, 5) ORDER BY user_id',
+    ).all<{ user_id: number; remaining_hundredths: number }>();
+    expect(balances.results).toEqual([
+      { user_id: 3, remaining_hundredths: 900 },
+      { user_id: 5, remaining_hundredths: 900 },
+    ]);
   });
 
   it('已完课课程锁定学生与时间', async () => {
@@ -55,6 +85,9 @@ describe('D1 排课约束', () => {
     await env.DB.prepare(
       "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, is_completed, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1, 1)",
     ).run();
+    await env.DB.prepare('UPDATE schedules SET is_completed = 0 WHERE id = 10').run();
+    await addMembers(10, 3, 5);
+    await env.DB.prepare('UPDATE schedules SET is_completed = 1 WHERE id = 10').run();
     await expect(env.DB.prepare("UPDATE schedules SET start_time = '08:30' WHERE id = 10").run())
       .rejects.toThrow('COMPLETED_SCHEDULE_LOCKED');
   });

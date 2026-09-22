@@ -10,7 +10,7 @@ const adminOnly = [requireAuth, requireRole('ADMIN')] as const;
 
 const createUserSchema = z.object({
   username: z.string().trim().min(1).max(40),
-  password: z.string().min(8).max(128),
+  password: z.string().min(5).max(128),
   role: z.enum(['ADMIN', 'TEACHER', 'STUDENT']),
   subject: z.string().trim().max(100).optional(),
   school: z.string().trim().max(100).optional(),
@@ -36,15 +36,15 @@ users.get('/', ...adminOnly, async (c) => {
   const pageSize = Number.isSafeInteger(requestedPageSize) && requestedPageSize >= 10
     ? Math.min(100, requestedPageSize)
     : 20;
-  const clauses: string[] = [];
+  const clauses: string[] = ['u.deleted_at IS NULL'];
   const params: unknown[] = [];
   if (role && ['ADMIN', 'TEACHER', 'STUDENT'].includes(role)) { clauses.push('u.role = ?'); params.push(role); }
   if (status && ['ACTIVE', 'DISABLED'].includes(status)) { clauses.push('u.status = ?'); params.push(status); }
   if (search) { clauses.push('u.username LIKE ? ESCAPE \'\\\''); params.push(`%${search.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`); }
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const where = `WHERE ${clauses.join(' AND ')}`;
   const count = await c.env.DB.prepare(`SELECT COUNT(*) AS total FROM users u ${where}`).bind(...params).first<{ total: number }>();
   const result = await c.env.DB.prepare(
-    `SELECT u.id, u.username, u.display_name, u.role, u.status, u.created_at,
+    `SELECT u.id, u.username, u.display_name, u.role, u.status, u.deleted_at, u.created_at,
       tp.subject, sp.school, sp.grade, sp.remaining_hundredths
      FROM users u
      LEFT JOIN teacher_profiles tp ON tp.user_id = u.id
@@ -80,8 +80,10 @@ users.patch('/:id', ...adminOnly, async (c) => {
   const id = Number(c.req.param('id'));
   const input = editUserSchema.safeParse(await c.req.json());
   if (!Number.isSafeInteger(id) || !input.success) throw new AppError(422, 'VALIDATION_ERROR', '用户信息有误');
-  const existing = await c.env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(id).first<{ role: Role }>();
+  const existing = await c.env.DB.prepare('SELECT role, deleted_at FROM users WHERE id = ?')
+    .bind(id).first<{ role: Role; deleted_at: string | null }>();
   if (!existing) throw new AppError(404, 'USER_NOT_FOUND', '用户不存在');
+  if (existing.deleted_at) throw new AppError(409, 'USER_DELETED', '已删除用户不能修改');
   const statements = [
     c.env.DB.prepare("UPDATE users SET username = ?, display_name = ?, updated_at = datetime('now') WHERE id = ?")
       .bind(input.data.username, input.data.username, id),
@@ -101,8 +103,10 @@ users.patch('/:id/status', ...adminOnly, async (c) => {
   const id = Number(c.req.param('id'));
   const input = z.object({ status: z.enum(['ACTIVE', 'DISABLED']) }).safeParse(await c.req.json());
   if (!Number.isSafeInteger(id) || !input.success) throw new AppError(422, 'VALIDATION_ERROR', '状态无效');
-  const target = await c.env.DB.prepare('SELECT role, status FROM users WHERE id = ?').bind(id).first<{ role: Role; status: string }>();
+  const target = await c.env.DB.prepare('SELECT role, status, deleted_at FROM users WHERE id = ?')
+    .bind(id).first<{ role: Role; status: string; deleted_at: string | null }>();
   if (!target) throw new AppError(404, 'USER_NOT_FOUND', '用户不存在');
+  if (target.deleted_at) throw new AppError(409, 'USER_DELETED', '已删除用户不能重新启用');
   if (input.data.status === 'DISABLED') {
     if (id === c.get('user').id) throw new AppError(409, 'CANNOT_DISABLE_SELF', '不能停用当前登录的管理员');
     if (target.role === 'ADMIN' && target.status === 'ACTIVE') {
@@ -120,14 +124,38 @@ users.patch('/:id/status', ...adminOnly, async (c) => {
 
 users.post('/:id/password', ...adminOnly, async (c) => {
   const id = Number(c.req.param('id'));
-  const input = z.object({ password: z.string().min(8).max(128) }).safeParse(await c.req.json());
-  if (!Number.isSafeInteger(id) || !input.success) throw new AppError(422, 'VALIDATION_ERROR', '密码至少 8 位');
+  const input = z.object({ password: z.string().min(5).max(128) }).safeParse(await c.req.json());
+  if (!Number.isSafeInteger(id) || !input.success) throw new AppError(422, 'VALIDATION_ERROR', '密码至少 5 位');
+  const target = await c.env.DB.prepare('SELECT deleted_at FROM users WHERE id = ?')
+    .bind(id).first<{ deleted_at: string | null }>();
+  if (!target) throw new AppError(404, 'USER_NOT_FOUND', '用户不存在');
+  if (target.deleted_at) throw new AppError(409, 'USER_DELETED', '已删除用户不能重置密码');
   const hash = await hashPassword(input.data.password);
   const result = await c.env.DB.batch([
     c.env.DB.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").bind(hash, id),
     c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
   ]);
   if ((result[0].meta.changes ?? 0) === 0) throw new AppError(404, 'USER_NOT_FOUND', '用户不存在');
+  return c.json({ data: { success: true } });
+});
+
+users.delete('/:id', ...adminOnly, async (c) => {
+  const id = Number(c.req.param('id'));
+  if (!Number.isSafeInteger(id)) throw new AppError(422, 'VALIDATION_ERROR', '用户 ID 无效');
+  if (id === c.get('user').id) throw new AppError(409, 'CANNOT_DELETE_SELF', '不能删除当前登录的管理员');
+  const target = await c.env.DB.prepare('SELECT id, deleted_at FROM users WHERE id = ?')
+    .bind(id).first<{ id: number; deleted_at: string | null }>();
+  if (!target) throw new AppError(404, 'USER_NOT_FOUND', '用户不存在');
+  if (target.deleted_at) return c.json({ data: { success: true } });
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE users SET
+        username = '__deleted__' || id || '__' || lower(hex(randomblob(16))),
+        status = 'DISABLED', deleted_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ? AND deleted_at IS NULL`,
+    ).bind(id),
+    c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
+  ]);
   return c.json({ data: { success: true } });
 });
 
@@ -151,7 +179,7 @@ users.post('/:id/adjust-hours', ...adminOnly, async (c) => {
     .safeParse(await c.req.json());
   if (!Number.isSafeInteger(studentId) || !input.success) throw new AppError(422, 'VALIDATION_ERROR', '调整数量和备注不能为空');
   const student = await c.env.DB.prepare(
-    "SELECT u.id FROM users u JOIN student_profiles sp ON sp.user_id = u.id WHERE u.id = ? AND u.role = 'STUDENT'",
+    "SELECT u.id FROM users u JOIN student_profiles sp ON sp.user_id = u.id WHERE u.id = ? AND u.role = 'STUDENT' AND u.deleted_at IS NULL",
   ).bind(studentId).first();
   if (!student) throw new AppError(404, 'STUDENT_NOT_FOUND', '学生不存在');
   try {

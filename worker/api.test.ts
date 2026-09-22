@@ -35,6 +35,7 @@ describe('API 权限与幂等性', () => {
     await seedUser(2, '王老师', 'TEACHER');
     await seedUser(3, '张三', 'STUDENT');
     await seedUser(4, '李老师', 'TEACHER');
+    await seedUser(5, '李四', 'STUDENT');
     adminCookie = await cookieFor(1, 'admin-token');
     teacherCookie = await cookieFor(2, 'teacher-token');
     studentCookie = await cookieFor(3, 'student-token');
@@ -69,6 +70,9 @@ describe('API 权限与幂等性', () => {
     await env.DB.prepare(
       "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:30', 150, 1)",
     ).run();
+    await env.DB.prepare(
+      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0), (10, 5, 1)',
+    ).run();
     const first = await api('/api/schedules/10/completion', teacherCookie, {
       method: 'PATCH', body: JSON.stringify({ completed: true, version: 1 }),
     });
@@ -77,9 +81,94 @@ describe('API 权限与幂等性', () => {
     });
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    const balance = await env.DB.prepare('SELECT remaining_hundredths FROM student_profiles WHERE user_id = 3')
-      .first<{ remaining_hundredths: number }>();
-    expect(balance?.remaining_hundredths).toBe(850);
+    const balances = await env.DB.prepare(
+      'SELECT user_id, remaining_hundredths FROM student_profiles WHERE user_id IN (3, 5) ORDER BY user_id',
+    ).all<{ user_id: number; remaining_hundredths: number }>();
+    expect(balances.results).toEqual([
+      { user_id: 3, remaining_hundredths: 850 },
+      { user_id: 5, remaining_hundredths: 850 },
+    ]);
+  });
+
+  it('多学生创建失败时原子回滚课程和成员', async () => {
+    await env.DB.prepare(
+      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 4, 5, '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
+    ).run();
+    await env.DB.prepare(
+      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 5, 0)',
+    ).run();
+
+    const response = await api('/api/schedules', adminCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        teacherId: 2, studentIds: [3, 5], subject: '数学', classDate: '2026-09-22',
+        startTime: '09:00', endTime: '10:00', classroom: 'A101',
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS total FROM schedules').first<{ total: number }>())?.total).toBe(1);
+    const members = await env.DB.prepare(
+      'SELECT schedule_id, student_id FROM schedule_students ORDER BY schedule_id, position',
+    ).all<{ schedule_id: number; student_id: number }>();
+    expect(members.results).toEqual([{ schedule_id: 10, student_id: 5 }]);
+  });
+
+  it('多学生更新失败时原子恢复原成员和课程版本', async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (11, 4, 5, '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
+      ),
+      env.DB.prepare(
+        'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0), (11, 5, 0)',
+      ),
+    ]);
+
+    const response = await api('/api/schedules/10', teacherCookie, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        studentIds: [3, 5], subject: '数学', classDate: '2026-09-22',
+        startTime: '09:00', endTime: '10:00', classroom: '', version: 1,
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const schedule = await env.DB.prepare('SELECT student_id, version FROM schedules WHERE id = 10')
+      .first<{ student_id: number; version: number }>();
+    expect(schedule).toEqual({ student_id: 3, version: 1 });
+    const members = await env.DB.prepare(
+      'SELECT student_id, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
+    ).all<{ student_id: number; position: number }>();
+    expect(members.results).toEqual([{ student_id: 3, position: 0 }]);
+  });
+
+  it('成员更新遇到过期版本时不改课程或成员', async () => {
+    await env.DB.prepare(
+      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, version, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 2, 1)",
+    ).run();
+    await env.DB.prepare(
+      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0)',
+    ).run();
+
+    const response = await api('/api/schedules/10', teacherCookie, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        studentIds: [3, 5], subject: '改名后的数学', classDate: '2026-09-22',
+        startTime: '09:00', endTime: '10:00', classroom: '', version: 1,
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const schedule = await env.DB.prepare('SELECT subject, student_id, version FROM schedules WHERE id = 10')
+      .first<{ subject: string; student_id: number; version: number }>();
+    expect(schedule).toEqual({ subject: '数学', student_id: 3, version: 2 });
+    const members = await env.DB.prepare(
+      'SELECT student_id, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
+    ).all<{ student_id: number; position: number }>();
+    expect(members.results).toEqual([{ student_id: 3, position: 0 }]);
   });
 
   it('管理员停用账号后立即撤销其会话', async () => {
@@ -104,6 +193,114 @@ describe('API 权限与幂等性', () => {
       .first<{ total: number }>();
     expect(sessions?.total).toBe(0);
     expect(response.headers.get('Set-Cookie')).toContain('Max-Age=0');
+  });
+
+  it('管理员可用五位密码重置账号并撤销旧会话', async () => {
+    await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = 2')
+      .bind(await hashPassword('old-password')).run();
+    await cookieFor(2, 'teacher-second-token');
+
+    const tooShort = await api('/api/users/2/password', adminCookie, {
+      method: 'POST', body: JSON.stringify({ password: '1234' }),
+    });
+    expect(tooShort.status).toBe(422);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS total FROM sessions WHERE user_id = 2')
+      .first<{ total: number }>())?.total).toBe(2);
+
+    const reset = await api('/api/users/2/password', adminCookie, {
+      method: 'POST', body: JSON.stringify({ password: '12345' }),
+    });
+    expect(reset.status).toBe(200);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS total FROM sessions WHERE user_id = 2')
+      .first<{ total: number }>())?.total).toBe(0);
+
+    const oldLogin = await SELF.fetch(`${origin}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '王老师', password: 'old-password' }),
+    });
+    const newLogin = await SELF.fetch(`${origin}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '王老师', password: '12345' }),
+    });
+    expect(oldLogin.status).toBe(401);
+    expect(newLogin.status).toBe(200);
+  });
+
+  it('注册密码至少五位', async () => {
+    const short = await SELF.fetch(`${origin}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '短密码', password: '1234', role: 'STUDENT' }),
+    });
+    const valid = await SELF.fetch(`${origin}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '五位密码', password: '12345', role: 'STUDENT' }),
+    });
+    expect(short.status).toBe(422);
+    expect(valid.status).toBe(201);
+  });
+
+  it('删除用户后隐藏账号、撤销会话、保留历史并释放姓名', async () => {
+    await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = 3')
+      .bind(await hashPassword('12345')).run();
+    await env.DB.prepare(
+      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+    ).run();
+    await env.DB.prepare(
+      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0)',
+    ).run();
+
+    const deleted = await api('/api/users/3', adminCookie, { method: 'DELETE' });
+    expect(deleted.status).toBe(200);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS total FROM sessions WHERE user_id = 3')
+      .first<{ total: number }>())?.total).toBe(0);
+
+    const deletedUser = await env.DB.prepare(
+      'SELECT username, display_name, status, deleted_at FROM users WHERE id = 3',
+    ).first<{ username: string; display_name: string; status: string; deleted_at: string | null }>();
+    expect(deletedUser?.username).toMatch(/^__deleted__3__[0-9a-f]{32}$/);
+    expect(deletedUser?.display_name).toBe('张三');
+    expect(deletedUser?.status).toBe('DISABLED');
+    expect(deletedUser?.deleted_at).not.toBeNull();
+
+    const list = await api('/api/users', adminCookie);
+    const listBody = await list.json<{ data: Array<{ id: number }> }>();
+    expect(listBody.data.some((user) => user.id === 3)).toBe(false);
+
+    const history = await api('/api/schedules/10', adminCookie);
+    const historyBody = await history.json<{ data: { student_names: string[] } }>();
+    expect(history.status).toBe(200);
+    expect(historyBody.data.student_names).toEqual(['张三']);
+
+    const login = await SELF.fetch(`${origin}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '张三', password: '12345' }),
+    });
+    expect(login.status).toBe(401);
+
+    const replacement = await api('/api/users', adminCookie, {
+      method: 'POST', body: JSON.stringify({ username: '张三', password: '12345', role: 'STUDENT' }),
+    });
+    expect(replacement.status).toBe(201);
+
+    const cannotScheduleDeletedStudent = await api('/api/schedules', adminCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        teacherId: 4, studentIds: [3], subject: '英语', classDate: '2026-09-23',
+        startTime: '09:00', endTime: '10:00', classroom: '',
+      }),
+    });
+    expect(cannotScheduleDeletedStudent.status).toBe(409);
+
+    const deletedTeacher = await api('/api/users/2', adminCookie, { method: 'DELETE' });
+    expect(deletedTeacher.status).toBe(200);
+    const cannotScheduleDeletedTeacher = await api('/api/schedules', adminCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        teacherId: 2, studentIds: [5], subject: '数学', classDate: '2026-09-23',
+        startTime: '10:00', endTime: '11:00', classroom: '',
+      }),
+    });
+    expect(cannotScheduleDeletedTeacher.status).toBe(409);
   });
 
   it('拒绝跨站写请求', async () => {

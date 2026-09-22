@@ -10,12 +10,15 @@ export function AuthPage() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [role, setRole] = useState<Exclude<Role, 'ADMIN'>>('STUDENT');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   if (user) return <Navigate to="/calendar" replace />;
   async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError('');
+    event.preventDefault(); setError('');
+    if (mode === 'register' && password !== confirmPassword) { setError('两次输入的密码不一致'); return; }
+    setBusy(true);
     try { if (mode === 'login') await login(username.trim(), password); else await register(username.trim(), password, role); }
     catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); }
     finally { setBusy(false); }
@@ -31,10 +34,11 @@ export function AuthPage() {
         <div><p className="eyebrow">{mode === 'login' ? '欢迎回来' : '开始使用'}</p><h2>{mode === 'login' ? '登录青禾排课' : '创建新账号'}</h2><p className="muted">使用姓名作为登录账号</p></div>
         <Notice error={error} />
         <Field label="姓名"><Input autoFocus required maxLength={40} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="例如：王老师" autoComplete="username" /></Field>
-        <Field label="密码" hint={mode === 'register' ? '至少 8 位字符' : undefined}><Input required minLength={8} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} /></Field>
+        <Field label="密码" hint={mode === 'register' ? '至少 5 位字符' : undefined}><Input required minLength={5} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} /></Field>
+        {mode === 'register' && <Field label="确认密码"><Input required minLength={5} type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" aria-invalid={Boolean(confirmPassword && confirmPassword !== password)} /></Field>}
         {mode === 'register' && <Field label="身份"><Select value={role} onChange={(e) => setRole(e.target.value as Exclude<Role, 'ADMIN'>)}><option value="STUDENT">学生</option><option value="TEACHER">教师</option></Select></Field>}
         <Button type="submit" disabled={busy}>{busy ? '请稍候…' : mode === 'login' ? '登录' : '注册并进入'}</Button>
-        <p className="auth-switch">{mode === 'login' ? '还没有账号？' : '已经有账号？'} <button type="button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>{mode === 'login' ? '立即注册' : '返回登录'}</button></p>
+        <p className="auth-switch">{mode === 'login' ? '还没有账号？' : '已经有账号？'} <button type="button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setConfirmPassword(''); }}>{mode === 'login' ? '立即注册' : '返回登录'}</button></p>
       </form>
     </section>
   </main>;

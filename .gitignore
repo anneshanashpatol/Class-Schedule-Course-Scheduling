@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+playwright-report/
+test-results/
+coverage/
+.env
+.env.*
+!.env.example
+*.pem
+*.log
+*.tsbuildinfo

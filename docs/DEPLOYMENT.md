@@ -40,6 +40,10 @@
 
    部署成功后访问 `/api/health`，再通过真实域名完成管理员登录、创建测试教师／学生、创建排课、完课与取消完课。验证完删除测试排课并停用测试账号。
 
+## 公开访问前的账号保护
+
+第一版按产品约定允许教师和学生自行注册，注册后立即启用。部署到公网前，应在 Cloudflare 为 `/api/auth/login` 和 `/api/auth/register` 配置速率限制，减少暴力尝试和批量注册；如果系统只供固定机构使用，还应在 Cloudflare Access 或上游网关限制可访问人员。管理员账号始终只能通过初始化工具或已有管理员创建。
+
 ## 后续更新
 
 ```powershell
@@ -60,4 +64,3 @@ npm run deploy
 - API 日志：Cloudflare Dashboard 的 Workers Logs，或 `npx wrangler tail`。
 - D1 状态：Cloudflare Dashboard 的 D1 控制台及 `npx wrangler d1 migrations list course-scheduler-db --remote`。
 - 页面可打开但 API 报错时，先检查 D1 binding 和迁移；整个域名打不开时，再检查 Worker 部署和自定义域名状态。
-

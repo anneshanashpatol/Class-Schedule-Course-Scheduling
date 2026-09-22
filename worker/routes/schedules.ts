@@ -7,12 +7,15 @@ import type { AppBindings, AuthUser } from '../types';
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+const validDate = (value: string) => datePattern.test(value)
+  && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+  && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
 const scheduleInput = z.object({
   teacherId: z.number().int().positive().optional(),
   studentId: z.number().int().positive(),
   subject: z.string().trim().min(1).max(100),
-  classDate: z.string().regex(datePattern),
+  classDate: z.string().refine(validDate, '日期无效'),
   startTime: z.string().regex(timePattern),
   endTime: z.string().regex(timePattern),
   classroom: z.string().trim().max(100).default(''),
@@ -22,8 +25,8 @@ const scheduleInput = z.object({
 const filterSchema = z.object({
   teacherId: z.coerce.number().int().positive().optional(),
   studentId: z.coerce.number().int().positive().optional(),
-  dateFrom: z.string().regex(datePattern).optional(),
-  dateTo: z.string().regex(datePattern).optional(),
+  dateFrom: z.string().refine(validDate, '开始日期无效').optional(),
+  dateTo: z.string().refine(validDate, '结束日期无效').optional(),
   subject: z.string().trim().max(100).optional(),
   classroom: z.string().trim().max(100).optional(),
   completed: z.enum(['true', 'false']).optional(),
@@ -56,6 +59,16 @@ function parseFilters(query: Record<string, string>) {
   return result.data;
 }
 
+function positiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value ?? fallback);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function nonnegativeInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value ?? fallback);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function scheduleSelect(where: string) {
   return `SELECT s.id, s.teacher_id, s.student_id, s.subject, s.class_date, s.start_time, s.end_time,
     s.lesson_hundredths, s.classroom, s.is_completed, s.version, s.created_at, s.updated_at,
@@ -78,8 +91,8 @@ schedules.use('*', requireAuth);
 schedules.get('/', async (c) => {
   const filters = parseFilters(c.req.query());
   const user = c.get('user');
-  const page = Math.max(1, Number(c.req.query('page') ?? 1));
-  const requested = Number(c.req.query('pageSize') ?? 20);
+  const page = positiveInteger(c.req.query('page'), 1);
+  const requested = positiveInteger(c.req.query('pageSize'), 20);
   const pageSize = [10, 20, 50, 100].includes(requested) ? requested : 20;
   const where = buildWhere(user, filters);
   const count = await c.env.DB.prepare(`SELECT COUNT(*) AS total FROM schedules s ${where.sql}`)
@@ -93,8 +106,8 @@ schedules.get('/', async (c) => {
 schedules.get('/export-data', async (c) => {
   const filters = parseFilters(c.req.query());
   const user = c.get('user');
-  const offset = Math.max(0, Number(c.req.query('offset') ?? 0));
-  const limit = Math.min(1000, Math.max(1, Number(c.req.query('limit') ?? 500)));
+  const offset = nonnegativeInteger(c.req.query('offset'), 0);
+  const limit = Math.min(1000, positiveInteger(c.req.query('limit'), 500));
   const where = buildWhere(user, filters);
   const idsText = c.req.query('ids');
   if (idsText) {
@@ -203,10 +216,18 @@ schedules.post('/bulk-delete', requireRole('ADMIN'), async (c) => {
     return c.json({ data: { deleted: results.reduce((sum, result) => sum + (result.meta.changes ?? 0), 0) } });
   }
   const where = buildWhere(c.get('user'), input.data.filters);
-  const count = await c.env.DB.prepare(`SELECT COUNT(*) AS total FROM schedules s ${where.sql}`).bind(...where.params).first<{ total: number }>();
-  if ((count?.total ?? 0) !== input.data.expectedCount) {
-    throw new AppError(409, 'FILTER_COUNT_CHANGED', '筛选结果数量已变化，请重新确认', { actualCount: count?.total ?? 0 });
+  const outerCondition = where.sql ? where.sql.replace(/^WHERE /, '').replaceAll('s.', '') : '1 = 1';
+  const result = await c.env.DB.prepare(
+    `DELETE FROM schedules
+     WHERE (${outerCondition})
+       AND (SELECT COUNT(*) FROM schedules s ${where.sql}) = ?`,
+  ).bind(...where.params, ...where.params, input.data.expectedCount).run();
+  if (input.data.expectedCount === 0 || (result.meta.changes ?? 0) !== input.data.expectedCount) {
+    const actual = await c.env.DB.prepare(`SELECT COUNT(*) AS total FROM schedules s ${where.sql}`)
+      .bind(...where.params).first<{ total: number }>();
+    if ((actual?.total ?? 0) !== 0 || (result.meta.changes ?? 0) !== input.data.expectedCount) {
+      throw new AppError(409, 'FILTER_COUNT_CHANGED', '筛选结果数量已变化，请重新确认', { actualCount: actual?.total ?? 0 });
+    }
   }
-  const result = await c.env.DB.prepare(`DELETE FROM schedules ${where.sql.replaceAll('s.', '')}`).bind(...where.params).run();
   return c.json({ data: { deleted: result.meta.changes ?? 0 } });
 });

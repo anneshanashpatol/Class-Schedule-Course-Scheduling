@@ -7,9 +7,9 @@ async function seedPeople() {
     env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (2, '王老师', '王老师', 'x', 'TEACHER')"),
     env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (3, '张三', '张三', 'x', 'STUDENT')"),
     env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (4, '李老师', '李老师', 'x', 'TEACHER')"),
-    env.DB.prepare('INSERT INTO teacher_profiles (user_id, subject) VALUES (2, \'数学\')'),
-    env.DB.prepare('INSERT INTO teacher_profiles (user_id, subject) VALUES (4, \'英语\')'),
-    env.DB.prepare('INSERT INTO student_profiles (user_id, remaining_hundredths) VALUES (3, 1000)'),
+    env.DB.prepare("UPDATE teacher_profiles SET subject = '数学' WHERE user_id = 2"),
+    env.DB.prepare("UPDATE teacher_profiles SET subject = '英语' WHERE user_id = 4"),
+    env.DB.prepare('UPDATE student_profiles SET remaining_hundredths = 1000 WHERE user_id = 3'),
   ]);
 }
 
@@ -64,5 +64,10 @@ describe('D1 排课约束', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ data: { status: 'ok' } });
   });
-});
 
+  it('数据库阻止停用最后一个启用管理员', async () => {
+    await env.DB.prepare("INSERT INTO users (id, username, display_name, password_hash, role) VALUES (1, 'admin', 'admin', 'x', 'ADMIN')").run();
+    await expect(env.DB.prepare("UPDATE users SET status = 'DISABLED' WHERE id = 1").run())
+      .rejects.toThrow('LAST_ACTIVE_ADMIN');
+  });
+});

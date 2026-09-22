@@ -11,7 +11,7 @@
     "test:unit": "vitest run --config vitest.config.ts",
     "test:worker": "vitest run --config vitest.worker.config.ts",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/seed-e2e.mjs && playwright test",
     "lint": "eslint .",
     "db:migrate:local": "wrangler d1 migrations apply course-scheduler-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply course-scheduler-db --remote",

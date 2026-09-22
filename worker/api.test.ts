@@ -1,6 +1,6 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { sha256 } from './lib/security';
+import { hashPassword, sha256 } from './lib/security';
 
 const origin = 'https://example.com';
 
@@ -8,8 +8,7 @@ async function seedUser(id: number, name: string, role: 'ADMIN' | 'TEACHER' | 'S
   await env.DB.prepare(
     'INSERT INTO users (id, username, display_name, password_hash, role, status) VALUES (?, ?, ?, ?, ?, ?)',
   ).bind(id, name, name, 'unused', role, status).run();
-  if (role === 'TEACHER') await env.DB.prepare('INSERT INTO teacher_profiles (user_id) VALUES (?)').bind(id).run();
-  if (role === 'STUDENT') await env.DB.prepare('INSERT INTO student_profiles (user_id, remaining_hundredths) VALUES (?, 1000)').bind(id).run();
+  if (role === 'STUDENT') await env.DB.prepare('UPDATE student_profiles SET remaining_hundredths = 1000 WHERE user_id = ?').bind(id).run();
 }
 
 async function cookieFor(userId: number, token: string) {
@@ -92,6 +91,21 @@ describe('API 权限与幂等性', () => {
     expect(me.status).toBe(401);
   });
 
+  it('修改密码后撤销该用户的全部会话', async () => {
+    await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = 2')
+      .bind(await hashPassword('old-password')).run();
+    await cookieFor(2, 'teacher-second-token');
+    const response = await api('/api/auth/change-password', teacherCookie, {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword: 'old-password', newPassword: 'new-password' }),
+    });
+    expect(response.status).toBe(200);
+    const sessions = await env.DB.prepare('SELECT COUNT(*) AS total FROM sessions WHERE user_id = 2')
+      .first<{ total: number }>();
+    expect(sessions?.total).toBe(0);
+    expect(response.headers.get('Set-Cookie')).toContain('Max-Age=0');
+  });
+
   it('拒绝跨站写请求', async () => {
     const response = await SELF.fetch(`${origin}/api/users/3/status`, {
       method: 'PATCH',
@@ -100,5 +114,30 @@ describe('API 权限与幂等性', () => {
     });
     expect(response.status).toBe(403);
   });
-});
 
+  it('人工课时调整使用请求 ID 保证重复提交幂等', async () => {
+    const body = JSON.stringify({ amountHundredths: 125, note: '续费', requestId: 'aabf3441-6240-4d1e-97e1-4a6787829e36' });
+    const first = await api('/api/users/3/adjust-hours', adminCookie, { method: 'POST', body });
+    const second = await api('/api/users/3/adjust-hours', adminCookie, { method: 'POST', body });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const balance = await env.DB.prepare('SELECT remaining_hundredths FROM student_profiles WHERE user_id = 3')
+      .first<{ remaining_hundredths: number }>();
+    const records = await env.DB.prepare('SELECT COUNT(*) AS total FROM lesson_adjustments WHERE student_id = 3')
+      .first<{ total: number }>();
+    expect(balance?.remaining_hundredths).toBe(1125);
+    expect(records?.total).toBe(1);
+  });
+
+  it('筛选数量变化时不删除任何课程', async () => {
+    await env.DB.prepare(
+      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+    ).run();
+    const response = await api('/api/schedules/bulk-delete', adminCookie, {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'filtered', filters: { subject: '数学' }, expectedCount: 0 }),
+    });
+    expect(response.status).toBe(409);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS total FROM schedules').first<{ total: number }>())?.total).toBe(1);
+  });
+});

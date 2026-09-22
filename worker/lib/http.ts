@@ -31,7 +31,9 @@ export function jsonError(c: Context, error: unknown) {
   if (message.includes('TEACHER_NOT_ACTIVE') || message.includes('STUDENT_NOT_ACTIVE')) {
     return c.json({ error: { code: 'USER_NOT_ACTIVE', message: '排课参与者必须处于启用状态' } }, 409);
   }
+  if (message.includes('LAST_ACTIVE_ADMIN')) {
+    return c.json({ error: { code: 'LAST_ADMIN', message: '不能停用最后一个启用的管理员' } }, 409);
+  }
   console.error(error);
   return c.json({ error: { code: 'INTERNAL_ERROR', message: '服务暂时不可用，请稍后重试' } }, 500);
 }
-

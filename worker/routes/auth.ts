@@ -41,17 +41,24 @@ auth.post('/register', async (c) => {
   if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '注册信息有误', input.error.flatten());
   const username = input.data.username.trim();
   const passwordHash = await hashPassword(input.data.password);
-  const insert = await c.env.DB.prepare(
-    `INSERT INTO users (username, display_name, password_hash, role)
-     VALUES (?, ?, ?, ?) RETURNING id`,
-  ).bind(username, username, passwordHash, input.data.role).first<{ id: number }>();
-  if (!insert) throw new Error('创建账号失败');
-  const profile = input.data.role === 'TEACHER'
-    ? c.env.DB.prepare('INSERT INTO teacher_profiles (user_id) VALUES (?)').bind(insert.id)
-    : c.env.DB.prepare('INSERT INTO student_profiles (user_id) VALUES (?)').bind(insert.id);
-  await profile.run();
-  await issueSession(c, insert.id);
-  return c.json({ data: { id: insert.id, username, displayName: username, role: input.data.role, status: 'ACTIVE' } }, 201);
+  const token = createSessionToken();
+  const tokenHash = await sha256(token);
+  const result = await c.env.DB.batch([
+    c.env.DB.prepare(
+      'INSERT INTO users (username, display_name, password_hash, role) VALUES (?, ?, ?, ?)',
+    ).bind(username, username, passwordHash, input.data.role),
+    c.env.DB.prepare(
+      "INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (last_insert_rowid(), ?, datetime('now', '+14 days'))",
+    ).bind(tokenHash),
+  ]);
+  const userId = Number(result[0].meta.last_row_id);
+  setCookie(c, 'session', token, cookieOptions(c.env.APP_ENV === 'production'));
+  return c.json({
+    data: {
+      id: userId, username, displayName: username, role: input.data.role, status: 'ACTIVE',
+      ...(input.data.role === 'TEACHER' ? { subject: '' } : { school: '', grade: '', remainingHundredths: 0 }),
+    },
+  }, 201);
 });
 
 auth.post('/login', async (c) => {
@@ -65,7 +72,17 @@ auth.post('/login', async (c) => {
   }
   if (row.status !== 'ACTIVE') throw new AppError(403, 'ACCOUNT_DISABLED', '账号已停用，请联系管理员');
   await issueSession(c, Number(row.id));
-  return c.json({ data: { id: row.id, username: row.username, displayName: row.display_name, role: row.role, status: row.status } });
+  let profile: Record<string, unknown> = {};
+  if (row.role === 'TEACHER') {
+    profile = await c.env.DB.prepare('SELECT subject FROM teacher_profiles WHERE user_id = ?').bind(row.id).first() ?? {};
+  }
+  if (row.role === 'STUDENT') {
+    const student = await c.env.DB.prepare(
+      'SELECT school, grade, remaining_hundredths FROM student_profiles WHERE user_id = ?',
+    ).bind(row.id).first<Record<string, unknown>>();
+    profile = student ? { school: student.school, grade: student.grade, remainingHundredths: student.remaining_hundredths } : {};
+  }
+  return c.json({ data: { id: row.id, username: row.username, displayName: row.display_name, role: row.role, status: row.status, ...profile } });
 });
 
 auth.get('/me', requireAuth, async (c) => {
@@ -79,7 +96,11 @@ auth.get('/me', requireAuth, async (c) => {
     const row = await c.env.DB.prepare(
       'SELECT school, grade, remaining_hundredths FROM student_profiles WHERE user_id = ?',
     ).bind(user.id).first();
-    profile = row ?? {};
+    profile = row ? {
+      school: row.school,
+      grade: row.grade,
+      remainingHundredths: row.remaining_hundredths,
+    } : {};
   }
   return c.json({ data: { ...user, ...profile } });
 });
@@ -102,7 +123,8 @@ auth.post('/change-password', requireAuth, async (c) => {
   const hash = await hashPassword(input.data.newPassword);
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").bind(hash, user.id),
-    c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').bind(user.id, c.get('sessionTokenHash')),
+    c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
   ]);
+  deleteCookie(c, 'session', { path: '/' });
   return c.json({ data: { success: true } });
 });

@@ -30,8 +30,12 @@ users.get('/', ...adminOnly, async (c) => {
   const role = c.req.query('role') as Role | undefined;
   const search = c.req.query('search')?.trim() ?? '';
   const status = c.req.query('status');
-  const page = Math.max(1, Number(c.req.query('page') ?? 1));
-  const pageSize = Math.min(100, Math.max(10, Number(c.req.query('pageSize') ?? 20)));
+  const requestedPage = Number(c.req.query('page') ?? 1);
+  const requestedPageSize = Number(c.req.query('pageSize') ?? 20);
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const pageSize = Number.isSafeInteger(requestedPageSize) && requestedPageSize >= 10
+    ? Math.min(100, requestedPageSize)
+    : 20;
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (role && ['ADMIN', 'TEACHER', 'STUDENT'].includes(role)) { clauses.push('u.role = ?'); params.push(role); }
@@ -56,19 +60,20 @@ users.post('/', ...adminOnly, async (c) => {
   if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '用户信息有误', input.error.flatten());
   const username = input.data.username.trim();
   const passwordHash = await hashPassword(input.data.password);
-  const created = await c.env.DB.prepare(
-    'INSERT INTO users (username, display_name, password_hash, role) VALUES (?, ?, ?, ?) RETURNING id',
-  ).bind(username, username, passwordHash, input.data.role).first<{ id: number }>();
-  if (!created) throw new Error('创建用户失败');
-  if (input.data.role === 'TEACHER') {
-    await c.env.DB.prepare('INSERT INTO teacher_profiles (user_id, subject) VALUES (?, ?)')
-      .bind(created.id, input.data.subject ?? '').run();
-  }
-  if (input.data.role === 'STUDENT') {
-    await c.env.DB.prepare('INSERT INTO student_profiles (user_id, school, grade) VALUES (?, ?, ?)')
-      .bind(created.id, input.data.school ?? '', input.data.grade ?? '').run();
-  }
-  return c.json({ data: { id: created.id } }, 201);
+  const statements = [
+    c.env.DB.prepare('INSERT INTO users (username, display_name, password_hash, role) VALUES (?, ?, ?, ?)')
+      .bind(username, username, passwordHash, input.data.role),
+  ];
+  if (input.data.role === 'TEACHER') statements.push(
+    c.env.DB.prepare('UPDATE teacher_profiles SET subject = ? WHERE user_id = last_insert_rowid()')
+      .bind(input.data.subject ?? ''),
+  );
+  if (input.data.role === 'STUDENT') statements.push(
+    c.env.DB.prepare('UPDATE student_profiles SET school = ?, grade = ? WHERE user_id = last_insert_rowid()')
+      .bind(input.data.school ?? '', input.data.grade ?? ''),
+  );
+  const results = await c.env.DB.batch(statements);
+  return c.json({ data: { id: Number(results[0].meta.last_row_id) } }, 201);
 });
 
 users.patch('/:id', ...adminOnly, async (c) => {
@@ -138,21 +143,25 @@ users.get('/:id/adjustments', ...adminOnly, async (c) => {
 
 users.post('/:id/adjust-hours', ...adminOnly, async (c) => {
   const studentId = Number(c.req.param('id'));
-  const input = z.object({ amountHundredths: z.number().int().refine((value) => value !== 0), note: z.string().trim().min(1).max(200) })
+  const input = z.object({
+    amountHundredths: z.number().int().refine((value) => value !== 0),
+    note: z.string().trim().min(1).max(200),
+    requestId: z.string().uuid(),
+  })
     .safeParse(await c.req.json());
   if (!Number.isSafeInteger(studentId) || !input.success) throw new AppError(422, 'VALIDATION_ERROR', '调整数量和备注不能为空');
   const student = await c.env.DB.prepare(
     "SELECT u.id FROM users u JOIN student_profiles sp ON sp.user_id = u.id WHERE u.id = ? AND u.role = 'STUDENT'",
   ).bind(studentId).first();
   if (!student) throw new AppError(404, 'STUDENT_NOT_FOUND', '学生不存在');
-  await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE student_profiles SET remaining_hundredths = remaining_hundredths + ? WHERE user_id = ?')
-      .bind(input.data.amountHundredths, studentId),
-    c.env.DB.prepare('INSERT INTO lesson_adjustments (student_id, operator_id, amount_hundredths, note) VALUES (?, ?, ?, ?)')
-      .bind(studentId, c.get('user').id, input.data.amountHundredths, input.data.note),
-  ]);
+  try {
+    await c.env.DB.prepare(
+      'INSERT INTO lesson_adjustments (student_id, operator_id, amount_hundredths, note, request_id) VALUES (?, ?, ?, ?, ?)',
+    ).bind(studentId, c.get('user').id, input.data.amountHundredths, input.data.note, input.data.requestId).run();
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('lesson_adjustments.request_id')) throw error;
+  }
   const balance = await c.env.DB.prepare('SELECT remaining_hundredths FROM student_profiles WHERE user_id = ?')
     .bind(studentId).first<{ remaining_hundredths: number }>();
   return c.json({ data: { remainingHundredths: balance?.remaining_hundredths ?? 0 } });
 });
-

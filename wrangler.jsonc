@@ -11,6 +11,7 @@
     {
       "binding": "DB",
       "database_name": "course-scheduler-db",
+      // 本文件是通用模板；生产值由 Cloudflare Builds 的 BUILD_D1_DATABASE_ID 生成。
       "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
       "migrations_dir": "migrations"
     }

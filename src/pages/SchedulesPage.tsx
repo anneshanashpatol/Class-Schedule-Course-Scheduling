@@ -27,7 +27,7 @@ export function SchedulesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const canEdit = user?.role !== 'STUDENT';
 
   const load = useCallback(async () => {

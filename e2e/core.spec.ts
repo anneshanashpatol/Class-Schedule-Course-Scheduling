@@ -43,10 +43,10 @@ test.describe.serial('新需求核心流程', () => {
 
     const now = new Date();
     await expect(page.locator('.calendar-heading strong')).toHaveText(`${now.getFullYear()}年${now.getMonth() + 1}月`);
-    await expect(page.locator('.week-grid .calendar-period h3').filter({ hasText: '上午' })).toHaveCount(7);
-    await expect(page.locator('.week-grid .calendar-period h3').filter({ hasText: '下午' })).toHaveCount(7);
+    await expect(page.getByRole('heading', { name: '上午', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: '下午', exact: true })).toHaveCount(1);
 
-    await page.getByRole('button', { name: `在${now.getMonth() + 1}月${now.getDate()}日新增排课` }).click();
+    await page.getByRole('button', { name: `在${now.getMonth() + 1}月${now.getDate()}日上午新增排课`, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '新增排课' });
     await dialog.getByLabel('教师').selectOption({ label: 'e2e_王老师 · 数学、物理' });
     for (const student of ['e2e_张三', 'e2e_李四', 'e2e_王五', 'e2e_赵六']) {
@@ -90,10 +90,15 @@ test.describe.serial('新需求核心流程', () => {
   test('排课和用户筛选区可收起并恢复', async ({ page }) => {
     await login(page, 'e2e_admin');
     await page.getByRole('link', { name: '排课管理' }).click();
-    const scheduleToggle = page.getByRole('button', { name: '收起' });
+    const scheduleToggle = page.locator('.filter-title button');
+    await expect(scheduleToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByLabel('开始日期')).toBeHidden();
+    await scheduleToggle.click();
+    await expect(scheduleToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByLabel('开始日期')).toBeVisible();
     await scheduleToggle.click();
     await expect(page.getByLabel('开始日期')).toBeHidden();
-    await page.getByRole('button', { name: '展开' }).click();
+    await scheduleToggle.click();
     await expect(page.getByLabel('开始日期')).toBeVisible();
 
     await page.getByRole('link', { name: '用户管理' }).click();

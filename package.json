@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "cf:build": "node scripts/cloudflare-build.mjs",
+    "cf:deploy": "node scripts/cloudflare-deploy.mjs",
+    "cf:preview": "node scripts/cloudflare-preview.mjs",
     "typecheck": "tsc -b --pretty false",
     "test": "npm run test:unit && npm run test:worker",
     "test:unit": "vitest run --config vitest.config.ts",

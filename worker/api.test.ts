@@ -96,6 +96,25 @@ describe('API 权限与幂等性', () => {
     expect(teacherBulkDelete.status).toBe(403);
   });
 
+  it('登录 Cookie 可在后续请求中恢复会话', async () => {
+    await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = 1')
+      .bind(await hashPassword('admin12345')).run();
+    const login = await SELF.fetch(`${origin}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: 'admin', password: 'admin12345' }),
+    });
+    const setCookie = login.headers.get('Set-Cookie') ?? '';
+    expect(login.status).toBe(200);
+    expect(setCookie).toContain('session=');
+    expect(setCookie).toContain('HttpOnly');
+    expect(setCookie).toContain('Secure');
+    expect(setCookie).toContain('SameSite=Lax');
+
+    const cookie = setCookie.split(';', 1)[0];
+    const me = await api('/api/auth/me', cookie);
+    expect(me.status).toBe(200);
+  });
+
   it('重复完课请求只扣减一次余额', async () => {
     await env.DB.prepare(
       "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:30', 150, 1)",

@@ -15,11 +15,11 @@ const registerSchema = credentialsSchema.extend({
   role: z.enum(['TEACHER', 'STUDENT']),
 });
 
-function cookieOptions(isProduction: boolean) {
+function cookieOptions(isSecure: boolean) {
   return {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: 'Strict' as const,
+    secure: isSecure,
+    sameSite: 'Lax' as const,
     path: '/',
     maxAge: 60 * 60 * 24 * 14,
   };
@@ -31,7 +31,7 @@ async function issueSession(c: Context<AppBindings>, userId: number) {
   await c.env.DB.prepare(
     "INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (?, ?, datetime('now', '+14 days'))",
   ).bind(userId, tokenHash).run();
-  setCookie(c, 'session', token, cookieOptions(c.env.APP_ENV === 'production'));
+  setCookie(c, 'session', token, cookieOptions(new URL(c.req.url).protocol === 'https:'));
 }
 
 export const auth = new Hono<AppBindings>();
@@ -55,7 +55,7 @@ auth.post('/register', async (c) => {
     ).bind(tokenHash, username),
   ]);
   const userId = Number(result[0].meta.last_row_id);
-  setCookie(c, 'session', token, cookieOptions(c.env.APP_ENV === 'production'));
+  setCookie(c, 'session', token, cookieOptions(new URL(c.req.url).protocol === 'https:'));
   return c.json({
     data: {
       id: userId, username, displayName: username, role: input.data.role, status: 'ACTIVE',

@@ -2,11 +2,11 @@ import { useState, type FormEvent } from 'react';
 import { CalendarDays, CheckCircle2, Clock3 } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { Button, Field, Input, Notice, Select } from '../components/ui';
+import { Button, Field, Input, LoadingState, Notice, Select } from '../components/ui';
 import type { Role } from '../types';
 
 export function AuthPage() {
-  const { user, login, register } = useAuth();
+  const { user, loading, login, register } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -14,6 +14,7 @@ export function AuthPage() {
   const [role, setRole] = useState<Exclude<Role, 'ADMIN'>>('STUDENT');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  if (loading) return <main className="center-page"><LoadingState /></main>;
   if (user) return <Navigate to="/calendar" replace />;
   async function submit(event: FormEvent) {
     event.preventDefault(); setError('');

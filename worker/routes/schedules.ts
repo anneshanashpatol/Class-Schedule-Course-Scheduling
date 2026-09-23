@@ -23,6 +23,8 @@ const scheduleInput = z.object({
 });
 
 const filterSchema = z.object({
+  teacherName: z.string().trim().min(1).max(40).optional(),
+  studentName: z.string().trim().min(1).max(40).optional(),
   teacherId: z.coerce.number().int().positive().optional(),
   studentId: z.coerce.number().int().positive().optional(),
   dateFrom: z.string().refine(validDate, '开始日期无效').optional(),
@@ -83,11 +85,17 @@ function buildWhere(user: AuthUser, filters: Filters, alias = 's') {
     params.push(user.displayName);
     clauses.push(fullyMatched);
   }
-  if (user.role === 'ADMIN' && filters.teacherId) {
+  if (user.role === 'ADMIN' && filters.teacherName) {
+    clauses.push(`${alias}.teacher_name = ? COLLATE NOCASE`);
+    params.push(filters.teacherName);
+  } else if (user.role === 'ADMIN' && filters.teacherId) {
     clauses.push(`${alias}.teacher_name = (SELECT display_name FROM users WHERE id = ?) COLLATE NOCASE`);
     params.push(filters.teacherId);
   }
-  if (user.role !== 'STUDENT' && filters.studentId) {
+  if (user.role !== 'STUDENT' && filters.studentName) {
+    clauses.push(`EXISTS (SELECT 1 FROM schedule_students filtered_students WHERE filtered_students.schedule_id = ${alias}.id AND filtered_students.student_name = ? COLLATE NOCASE)`);
+    params.push(filters.studentName);
+  } else if (user.role !== 'STUDENT' && filters.studentId) {
     clauses.push(`EXISTS (SELECT 1 FROM schedule_students filtered_students WHERE filtered_students.schedule_id = ${alias}.id AND filtered_students.student_name = (SELECT display_name FROM users WHERE id = ?) COLLATE NOCASE)`);
     params.push(filters.studentId);
   }

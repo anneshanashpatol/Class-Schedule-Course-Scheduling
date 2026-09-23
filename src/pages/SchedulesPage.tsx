@@ -10,7 +10,7 @@ import { api, queryString } from '../lib/api';
 import { SCHEDULE_EXPORT_BATCH_SIZE } from '../lib/export';
 import type { Schedule, ScheduleFilters } from '../types';
 
-const emptyFilters: ScheduleFilters = { teacherId: '', studentId: '', dateFrom: '', dateTo: '', subject: '', classroom: '', completed: '' };
+const emptyFilters: ScheduleFilters = { teacherName: '', studentName: '', dateFrom: '', dateTo: '', subject: '', classroom: '', completed: '' };
 const lessonText = (value: number) => `${(value / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 课时`;
 const safeCell = (value: string) => /^[=+\-@]/.test(value) ? `'${value}` : value;
 
@@ -19,8 +19,6 @@ export function SchedulesPage() {
   const options = useScheduleOptions();
   const [filters, setFilters] = useState(emptyFilters);
   const [applied, setApplied] = useState(emptyFilters);
-  const [teacherName, setTeacherName] = useState('');
-  const [studentName, setStudentName] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [items, setItems] = useState<Schedule[]>([]);
@@ -46,18 +44,8 @@ export function SchedulesPage() {
   }, [applied, page, pageSize]);
   useEffect(() => { void load(); }, [load]);
 
-  function applyFilters(event: FormEvent) {
-    event.preventDefault();
-    const teacherId = resolvePersonId(teacherName, options.teachers);
-    const studentId = resolvePersonId(studentName, options.students);
-    if (teacherId === undefined || studentId === undefined) {
-      setError(teacherId === undefined ? '请输入系统中已有的教师姓名' : '请输入系统中已有的学生姓名');
-      return;
-    }
-    const next = { ...filters, teacherId, studentId };
-    setError(''); setFilters(next); setApplied(next); setPage(1); setSelected(new Set());
-  }
-  function resetFilters() { setTeacherName(''); setStudentName(''); setFilters(emptyFilters); setApplied(emptyFilters); setPage(1); setSelected(new Set()); }
+  function applyFilters(event: FormEvent) { event.preventDefault(); setApplied(filters); setPage(1); setSelected(new Set()); }
+  function resetFilters() { setFilters(emptyFilters); setApplied(emptyFilters); setPage(1); setSelected(new Set()); }
   async function remove(item: Schedule) {
     if (!confirm(`确定删除「${item.subject}」吗？\n删除后不可恢复，已完课课程也不会返还课时。`)) return;
     try { await api(`/schedules/${item.id}`, { method: 'DELETE' }); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : '删除失败'); }
@@ -113,8 +101,8 @@ export function SchedulesPage() {
     <Notice error={error} />
     <form className={`filter-panel ${filtersOpen ? '' : 'filter-panel--collapsed'}`} onSubmit={applyFilters}>
       <div className="filter-title"><span><Filter size={17} />筛选</span><button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((value) => !value)}>{filtersOpen ? '收起' : '展开'}</button></div>
-      {user?.role === 'ADMIN' && <Field label="教师"><Input list="schedule-teacher-options" value={teacherName} onChange={(e) => setTeacherName(e.target.value)} placeholder="输入教师姓名（留空为全部）" /><datalist id="schedule-teacher-options">{options.teachers.map((x) => <option value={x.name} key={x.id} />)}</datalist></Field>}
-      {user?.role !== 'STUDENT' && <Field label="学生"><Input list="schedule-student-options" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="输入学生姓名（留空为全部）" /><datalist id="schedule-student-options">{options.students.map((x) => <option value={x.name} key={x.id} />)}</datalist></Field>}
+      {user?.role === 'ADMIN' && <Field label="教师"><Input list="schedule-teacher-options" maxLength={40} value={filters.teacherName} onChange={(e) => setFilters({ ...filters, teacherName: e.target.value })} placeholder="输入教师姓名（留空为全部）" /><datalist id="schedule-teacher-options">{options.teachers.map((x) => <option value={x.name} key={x.id} />)}</datalist></Field>}
+      {user?.role !== 'STUDENT' && <Field label="学生"><Input list="schedule-student-options" maxLength={40} value={filters.studentName} onChange={(e) => setFilters({ ...filters, studentName: e.target.value })} placeholder="输入学生姓名（留空为全部）" /><datalist id="schedule-student-options">{options.students.map((x) => <option value={x.name} key={x.id} />)}</datalist></Field>}
       <Field label="开始日期"><Input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} /></Field>
       <Field label="结束日期"><Input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} /></Field>
       <Field label="科目"><Input value={filters.subject} onChange={(e) => setFilters({ ...filters, subject: e.target.value })} placeholder="输入科目" /></Field>
@@ -133,13 +121,6 @@ export function SchedulesPage() {
 }
 
 function cleanFilters(filters: ScheduleFilters) { return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '')); }
-
-function resolvePersonId(name: string, options: { id: number; name: string }[]) {
-  const normalized = name.trim().toLocaleLowerCase('zh-CN');
-  if (!normalized) return '';
-  const match = options.find((option) => option.name.trim().toLocaleLowerCase('zh-CN') === normalized);
-  return match ? String(match.id) : undefined;
-}
 
 function ScheduleRow({ item, admin, canEdit, selected, onSelect, onEdit, onDelete, onComplete }: { item: Schedule; admin: boolean; canEdit: boolean; selected: boolean; onSelect: (value: boolean) => void; onEdit: () => void; onDelete: () => void; onComplete: () => void }) {
   return <tr>{admin && <td><input type="checkbox" aria-label={`选择 ${item.subject}`} checked={selected} onChange={(e) => onSelect(e.target.checked)} /></td>}<td><strong>{item.class_date}</strong><span>{item.start_time}–{item.end_time}</span></td><td>{item.subject}</td><td>{item.teacher_name}</td><td title={item.student_names?.join('、')}>{compactStudentNames(item)}</td><td>{item.classroom || '—'}</td><td>{lessonText(item.lesson_hundredths)}</td><td><span className={`status ${item.is_completed ? 'status--done' : ''}`}>{item.is_completed ? '已完课' : '未完课'}</span></td><td>{canEdit ? <div className="row-actions"><button aria-label={item.is_completed ? '取消完课' : '标记完课'} title={item.is_completed ? '取消完课' : '标记完课'} onClick={onComplete}>{item.is_completed ? <X /> : <Check />}</button><button aria-label="编辑" onClick={onEdit}><Pencil /></button><button aria-label="删除" onClick={onDelete}><Trash2 /></button></div> : <button className="text-button" onClick={onEdit}>查看</button>}</td></tr>;

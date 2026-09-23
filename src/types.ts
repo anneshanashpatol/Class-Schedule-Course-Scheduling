@@ -47,8 +47,8 @@ export interface UserRecord {
 export interface PersonOption { id: number; name: string; subject?: string; status?: UserStatus }
 
 export interface ScheduleFilters {
-  teacherId: string;
-  studentId: string;
+  teacherName: string;
+  studentName: string;
   dateFrom: string;
   dateTo: string;
   subject: string;

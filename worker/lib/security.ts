@@ -1,5 +1,5 @@
 const encoder = new TextEncoder();
-const ITERATIONS = 210_000;
+const ITERATIONS = 100_000;
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -52,4 +52,3 @@ export async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', encoder.encode(value));
   return bytesToBase64(new Uint8Array(digest));
 }
-

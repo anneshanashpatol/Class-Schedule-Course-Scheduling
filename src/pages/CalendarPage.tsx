@@ -13,14 +13,24 @@ import type { Schedule } from '../types';
 dayjs.extend(isoWeek);
 dayjs.locale('zh-cn');
 
-const colors = ['sage', 'ochre', 'clay', 'blue', 'plum'];
+const subjectColors = [
+  ['语文', 'chinese'],
+  ['数学', 'math'],
+  ['英语', 'english'],
+  ['物理', 'physics'],
+  ['化学', 'chemistry'],
+  ['生物', 'biology'],
+  ['政治', 'politics'],
+  ['历史', 'history'],
+  ['地理', 'geography'],
+] as const;
 const periods = [
   { key: 'morning', label: '上午', matches: (item: Schedule) => item.start_time < '12:00' },
   { key: 'afternoon', label: '下午', matches: (item: Schedule) => item.start_time >= '12:00' },
 ];
 
 function subjectColor(subject: string) {
-  return colors[[...subject].reduce((sum, char) => sum + char.charCodeAt(0), 0) % colors.length];
+  return subjectColors.find(([name]) => subject.includes(name))?.[1] ?? 'other';
 }
 
 export function CalendarPage() {

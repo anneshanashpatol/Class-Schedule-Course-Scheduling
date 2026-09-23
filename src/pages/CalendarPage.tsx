@@ -102,7 +102,7 @@ function CalendarPeriod({ label, hideLabel = false, items, canEdit, onBlank, onO
 }
 
 function CourseCard({ item, onOpen }: { item: Schedule; onOpen: () => void }) {
-  const allStudents = item.student_names?.length ? item.student_names.join('、') : item.student_name;
+  const allStudents = item.student_names.join('、');
   return <button type="button" className={`course-card course-card--${subjectColor(item.subject)}`} onClick={(event) => { event.stopPropagation(); onOpen(); }}>
     <span className="course-card__time">{item.start_time}–{item.end_time}</span><strong>{item.subject}</strong><span>{item.teacher_name}</span><span title={allStudents}>{compactStudentNames(item)}</span>{item.classroom && <span>{item.classroom}</span>}<em>{item.is_completed ? '已完课' : '待上课'}</em>
   </button>;

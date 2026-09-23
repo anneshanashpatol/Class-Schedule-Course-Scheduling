@@ -48,9 +48,10 @@ test.describe.serial('新需求核心流程', () => {
 
     await page.getByRole('button', { name: `在${now.getMonth() + 1}月${now.getDate()}日上午新增排课`, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '新增排课' });
-    await dialog.getByLabel('教师').selectOption({ label: 'e2e_王老师 · 数学、物理' });
-    for (const student of ['e2e_张三', 'e2e_李四', 'e2e_王五', 'e2e_赵六']) {
-      await dialog.getByRole('checkbox', { name: student }).check();
+    await dialog.getByLabel('教师姓名').fill('e2e_王老师');
+    for (const [index, student] of ['e2e_张三', 'e2e_李四', 'e2e_王五', 'e2e_赵六'].entries()) {
+      if (index > 0) await dialog.getByRole('button', { name: '添加学生' }).click();
+      await dialog.getByLabel(`学生姓名 ${index + 1}`).fill(student);
     }
     await dialog.getByLabel('科目').fill('端到端多人数学');
     await dialog.getByLabel('开始时间').fill('09:15');
@@ -111,7 +112,7 @@ test.describe.serial('新需求核心流程', () => {
     await expect(page.getByLabel('搜索姓名')).toBeVisible();
   });
 
-  test('管理员可重置密码和删除用户，删除后保留历史课程且不能再排课', async ({ page }) => {
+  test('管理员可重置密码和删除用户，删除后保留历史课程且账号不能再登录', async ({ page }) => {
     await login(page, 'e2e_admin');
     await page.getByRole('link', { name: '用户管理' }).click();
     const target = userCard(page, 'e2e_待删除');
@@ -141,8 +142,10 @@ test.describe.serial('新需求核心流程', () => {
     await page.getByRole('link', { name: '排课管理' }).click();
     await expect(page.getByRole('row').filter({ hasText: 'E2E历史课程' })).toContainText('e2e_待删除');
     await page.getByRole('button', { name: '新增排课' }).click();
-    await expect(page.getByRole('dialog', { name: '新增排课' }).getByRole('checkbox', { name: 'e2e_待删除' })).toHaveCount(0);
-    await page.getByRole('dialog', { name: '新增排课' }).getByRole('button', { name: '取消' }).click();
+    const createDialog = page.getByRole('dialog', { name: '新增排课' });
+    await createDialog.getByLabel('学生姓名 1').fill('e2e_待删除');
+    await expect(createDialog.getByLabel('学生姓名 1')).toHaveValue('e2e_待删除');
+    await createDialog.getByRole('button', { name: '取消' }).click();
 
     await logout(page);
     await page.getByLabel('姓名').fill('e2e_待删除');

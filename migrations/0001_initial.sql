@@ -7,6 +7,7 @@ CREATE TABLE users (
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('ADMIN', 'TEACHER', 'STUDENT')),
   status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'DISABLED')),
+  deleted_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -34,7 +35,6 @@ CREATE TABLE sessions (
 CREATE TABLE schedules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   teacher_name TEXT NOT NULL,
-  student_name TEXT NOT NULL,
   subject TEXT NOT NULL,
   class_date TEXT NOT NULL,
   start_time TEXT NOT NULL,
@@ -50,63 +50,122 @@ CREATE TABLE schedules (
   CHECK (start_time < end_time)
 );
 
+CREATE TABLE schedule_students (
+  schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  student_name TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+  PRIMARY KEY (schedule_id, position),
+  UNIQUE (schedule_id, student_name COLLATE NOCASE)
+);
+
 CREATE TABLE lesson_adjustments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   operator_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   amount_hundredths INTEGER NOT NULL CHECK (amount_hundredths != 0),
   note TEXT NOT NULL CHECK (length(trim(note)) > 0),
+  request_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE TABLE app_settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-INSERT INTO app_settings (key, value) VALUES ('lesson_minutes', '60');
 
 CREATE INDEX idx_users_role_status ON users(role, status);
 CREATE INDEX idx_schedules_date ON schedules(class_date, start_time);
 CREATE INDEX idx_schedules_teacher_date ON schedules(teacher_name COLLATE NOCASE, class_date, start_time);
-CREATE INDEX idx_schedules_student_date ON schedules(student_name COLLATE NOCASE, class_date, start_time);
 CREATE INDEX idx_schedules_classroom_date ON schedules(classroom, class_date, start_time);
+CREATE INDEX idx_schedule_students_name ON schedule_students(student_name COLLATE NOCASE, schedule_id);
 CREATE INDEX idx_adjustments_student_created ON lesson_adjustments(student_id, created_at DESC, id DESC);
+CREATE UNIQUE INDEX idx_adjustments_request_id ON lesson_adjustments(request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX idx_sessions_user ON sessions(user_id);
-CREATE INDEX idx_sessions_expiry ON sessions(expires_at);
 
-CREATE TRIGGER schedules_prevent_conflict_insert
+CREATE TRIGGER users_create_teacher_profile
+AFTER INSERT ON users
+WHEN NEW.role = 'TEACHER'
+BEGIN
+  INSERT INTO teacher_profiles (user_id) VALUES (NEW.id);
+END;
+
+CREATE TRIGGER users_create_student_profile
+AFTER INSERT ON users
+WHEN NEW.role = 'STUDENT'
+BEGIN
+  INSERT INTO student_profiles (user_id) VALUES (NEW.id);
+END;
+
+CREATE TRIGGER users_keep_last_admin
+BEFORE UPDATE OF status ON users
+WHEN OLD.role = 'ADMIN' AND OLD.status = 'ACTIVE' AND NEW.status = 'DISABLED'
+  AND (SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND status = 'ACTIVE') <= 1
+BEGIN
+  SELECT RAISE(ABORT, 'LAST_ACTIVE_ADMIN');
+END;
+
+CREATE TRIGGER schedules_prevent_resource_conflict_insert
 BEFORE INSERT ON schedules
 BEGIN
   SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM schedules s
     WHERE s.class_date = NEW.class_date
       AND s.start_time < NEW.end_time AND s.end_time > NEW.start_time
-      AND (s.teacher_name = NEW.teacher_name COLLATE NOCASE OR s.student_name = NEW.student_name COLLATE NOCASE
+      AND (s.teacher_name = NEW.teacher_name COLLATE NOCASE
         OR (trim(NEW.classroom) != '' AND s.classroom = NEW.classroom))
   ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END);
 END;
 
-CREATE TRIGGER schedules_prevent_conflict_update
-BEFORE UPDATE OF teacher_name, student_name, class_date, start_time, end_time, classroom ON schedules
+CREATE TRIGGER schedules_prevent_resource_conflict_update
+BEFORE UPDATE OF teacher_name, class_date, start_time, end_time, classroom ON schedules
 BEGIN
   SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM schedules s
     WHERE s.id != NEW.id AND s.class_date = NEW.class_date
       AND s.start_time < NEW.end_time AND s.end_time > NEW.start_time
-      AND (s.teacher_name = NEW.teacher_name COLLATE NOCASE OR s.student_name = NEW.student_name COLLATE NOCASE
+      AND (s.teacher_name = NEW.teacher_name COLLATE NOCASE
         OR (trim(NEW.classroom) != '' AND s.classroom = NEW.classroom))
+  ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END);
+  SELECT (CASE WHEN EXISTS (
+    SELECT 1
+    FROM schedule_students own_students
+    JOIN schedule_students other_students ON other_students.student_name = own_students.student_name COLLATE NOCASE
+    JOIN schedules other ON other.id = other_students.schedule_id
+    WHERE own_students.schedule_id = NEW.id AND other.id != NEW.id
+      AND other.class_date = NEW.class_date
+      AND other.start_time < NEW.end_time AND other.end_time > NEW.start_time
+  ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END);
+END;
+
+CREATE TRIGGER schedule_students_prevent_conflict_insert
+BEFORE INSERT ON schedule_students
+BEGIN
+  SELECT (CASE WHEN EXISTS (
+    SELECT 1
+    FROM schedules candidate
+    JOIN schedule_students existing_students ON existing_students.student_name = NEW.student_name COLLATE NOCASE
+    JOIN schedules existing ON existing.id = existing_students.schedule_id
+    WHERE candidate.id = NEW.schedule_id AND existing.id != candidate.id
+      AND existing.class_date = candidate.class_date
+      AND existing.start_time < candidate.end_time AND existing.end_time > candidate.start_time
   ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END);
 END;
 
 CREATE TRIGGER schedules_lock_completed
-BEFORE UPDATE OF teacher_name, student_name, class_date, start_time, end_time, lesson_hundredths ON schedules
+BEFORE UPDATE OF class_date, start_time, end_time, lesson_hundredths ON schedules
 WHEN OLD.is_completed = 1 AND (
-  OLD.teacher_name != NEW.teacher_name COLLATE NOCASE OR OLD.student_name != NEW.student_name COLLATE NOCASE
-  OR OLD.class_date != NEW.class_date OR OLD.start_time != NEW.start_time
+  OLD.class_date != NEW.class_date OR OLD.start_time != NEW.start_time
   OR OLD.end_time != NEW.end_time OR OLD.lesson_hundredths != NEW.lesson_hundredths
 )
+BEGIN
+  SELECT RAISE(ABORT, 'COMPLETED_SCHEDULE_LOCKED');
+END;
+
+CREATE TRIGGER schedules_version_step
+BEFORE UPDATE OF version ON schedules
+WHEN NEW.version != OLD.version + 1
+BEGIN
+  SELECT RAISE(ABORT, 'VERSION_CONFLICT');
+END;
+
+CREATE TRIGGER schedule_students_lock_completed_insert
+BEFORE INSERT ON schedule_students
+WHEN (SELECT is_completed FROM schedules WHERE id = NEW.schedule_id) = 1
 BEGIN
   SELECT RAISE(ABORT, 'COMPLETED_SCHEDULE_LOCKED');
 END;
@@ -119,8 +178,19 @@ BEGIN
   SET remaining_hundredths = remaining_hundredths
     + CASE WHEN NEW.is_completed = 1 THEN -NEW.lesson_hundredths ELSE NEW.lesson_hundredths END
   WHERE user_id IN (
-    SELECT id FROM users WHERE role = 'STUDENT' AND display_name = NEW.student_name COLLATE NOCASE
+    SELECT u.id
+    FROM schedule_students ss
+    JOIN users u ON u.role = 'STUDENT' AND u.display_name = ss.student_name COLLATE NOCASE
+    WHERE ss.schedule_id = NEW.id AND u.deleted_at IS NULL
   );
+END;
+
+CREATE TRIGGER lesson_adjustment_balance
+AFTER INSERT ON lesson_adjustments
+BEGIN
+  UPDATE student_profiles
+  SET remaining_hundredths = remaining_hundredths + NEW.amount_hundredths
+  WHERE user_id = NEW.student_id;
 END;
 
 CREATE TRIGGER keep_recent_adjustments

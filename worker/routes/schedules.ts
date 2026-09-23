@@ -25,8 +25,6 @@ const scheduleInput = z.object({
 const filterSchema = z.object({
   teacherName: z.string().trim().min(1).max(40).optional(),
   studentName: z.string().trim().min(1).max(40).optional(),
-  teacherId: z.coerce.number().int().positive().optional(),
-  studentId: z.coerce.number().int().positive().optional(),
   dateFrom: z.string().refine(validDate, '开始日期无效').optional(),
   dateTo: z.string().refine(validDate, '结束日期无效').optional(),
   subject: z.string().trim().max(100).optional(),
@@ -74,16 +72,10 @@ function buildWhere(user: AuthUser, filters: Filters, alias = 's') {
   if (user.role === 'ADMIN' && filters.teacherName) {
     clauses.push(`${alias}.teacher_name = ? COLLATE NOCASE`);
     params.push(filters.teacherName);
-  } else if (user.role === 'ADMIN' && filters.teacherId) {
-    clauses.push(`${alias}.teacher_name = (SELECT display_name FROM users WHERE id = ?) COLLATE NOCASE`);
-    params.push(filters.teacherId);
   }
   if (user.role !== 'STUDENT' && filters.studentName) {
     clauses.push(`EXISTS (SELECT 1 FROM schedule_students filtered_students WHERE filtered_students.schedule_id = ${alias}.id AND filtered_students.student_name = ? COLLATE NOCASE)`);
     params.push(filters.studentName);
-  } else if (user.role !== 'STUDENT' && filters.studentId) {
-    clauses.push(`EXISTS (SELECT 1 FROM schedule_students filtered_students WHERE filtered_students.schedule_id = ${alias}.id AND filtered_students.student_name = (SELECT display_name FROM users WHERE id = ?) COLLATE NOCASE)`);
-    params.push(filters.studentId);
   }
   if (filters.dateFrom) { clauses.push(`${alias}.class_date >= ?`); params.push(filters.dateFrom); }
   if (filters.dateTo) { clauses.push(`${alias}.class_date <= ?`); params.push(filters.dateTo); }
@@ -112,7 +104,7 @@ function nonnegativeInteger(value: string | undefined, fallback: number) {
 function scheduleSelect(where: string) {
   return `SELECT s.id, s.subject, s.class_date, s.start_time, s.end_time,
     s.lesson_hundredths, s.classroom, s.is_completed, s.version, s.created_at, s.updated_at,
-    s.teacher_name, s.student_name,
+    s.teacher_name,
     COALESCE((SELECT json_group_array(student_name) FROM (
       SELECT ss.student_name FROM schedule_students ss
       WHERE ss.schedule_id = s.id ORDER BY ss.position
@@ -203,10 +195,10 @@ schedules.post('/', requireRole('ADMIN', 'TEACHER'), async (c) => {
   const results = await c.env.DB.batch([
     c.env.DB.prepare(
       `INSERT INTO schedules
-        (teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, classroom, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, classroom, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      teacherName, studentNames[0], input.data.subject, input.data.classDate,
+      teacherName, input.data.subject, input.data.classDate,
       input.data.startTime, input.data.endTime, lessonHundredths, input.data.classroom, user.id,
     ),
     studentInsert(c.env.DB, 'last_insert_rowid()', studentNames),
@@ -233,11 +225,11 @@ schedules.patch('/:id', requireRole('ADMIN', 'TEACHER'), async (c) => {
   }
   const lessonHundredths = calculateLessonHundredths(input.data.startTime, input.data.endTime);
   const update = c.env.DB.prepare(
-    `UPDATE schedules SET teacher_name = ?, student_name = ?, subject = ?, class_date = ?, start_time = ?,
+    `UPDATE schedules SET teacher_name = ?, subject = ?, class_date = ?, start_time = ?,
       end_time = ?, lesson_hundredths = ?, classroom = ?, version = ?, updated_at = datetime('now')
      WHERE id = ?`,
   ).bind(
-    teacherName, studentNames[0], input.data.subject, input.data.classDate, input.data.startTime,
+    teacherName, input.data.subject, input.data.classDate, input.data.startTime,
     input.data.endTime, lessonHundredths, input.data.classroom, input.data.version + 1, id,
   );
   const statements = membershipChanged

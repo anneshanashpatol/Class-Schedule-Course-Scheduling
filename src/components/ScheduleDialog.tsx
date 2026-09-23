@@ -22,7 +22,7 @@ const blankForm = (date?: string) => ({
 });
 
 export function scheduleStudentNames(item: Schedule) {
-  return item.student_names?.length ? item.student_names : [item.student_name].filter(Boolean);
+  return item.student_names;
 }
 
 export function compactStudentNames(item: Schedule) {

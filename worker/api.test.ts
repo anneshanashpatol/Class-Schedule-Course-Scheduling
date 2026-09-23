@@ -117,7 +117,7 @@ describe('API 权限与幂等性', () => {
 
   it('重复完课请求只扣减一次余额', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:30', 150, 1)",
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', '2026-09-22', '09:00', '10:30', 150, 1)",
     ).run();
     await env.DB.prepare(
       "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0), (10, '李四', 1)",
@@ -141,7 +141,7 @@ describe('API 权限与幂等性', () => {
 
   it('多学生创建失败时原子回滚课程和成员', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '李老师', '李四', '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '李老师', '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
     await env.DB.prepare(
       "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '李四', 0)",
@@ -166,10 +166,10 @@ describe('API 权限与幂等性', () => {
   it('多学生更新失败时原子恢复原成员和课程版本', async () => {
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+        "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
       ),
       env.DB.prepare(
-        "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (11, '李老师', '李四', '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
+        "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (11, '李老师', '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
       ),
       env.DB.prepare(
         "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0), (11, '李四', 0)",
@@ -185,9 +185,9 @@ describe('API 权限与幂等性', () => {
     });
 
     expect(response.status).toBe(409);
-    const schedule = await env.DB.prepare('SELECT student_name, version FROM schedules WHERE id = 10')
-      .first<{ student_name: string; version: number }>();
-    expect(schedule).toEqual({ student_name: '张三', version: 1 });
+    const schedule = await env.DB.prepare('SELECT version FROM schedules WHERE id = 10')
+      .first<{ version: number }>();
+    expect(schedule).toEqual({ version: 1 });
     const members = await env.DB.prepare(
       'SELECT student_name, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
     ).all<{ student_name: string; position: number }>();
@@ -196,7 +196,7 @@ describe('API 权限与幂等性', () => {
 
   it('成员更新遇到过期版本时不改课程或成员', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, version, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 2, 1)",
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, version, created_by) VALUES (10, '王老师', '数学', '2026-09-22', '09:00', '10:00', 100, 2, 1)",
     ).run();
     await env.DB.prepare(
       "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0)",
@@ -211,9 +211,9 @@ describe('API 权限与幂等性', () => {
     });
 
     expect(response.status).toBe(409);
-    const schedule = await env.DB.prepare('SELECT subject, student_name, version FROM schedules WHERE id = 10')
-      .first<{ subject: string; student_name: string; version: number }>();
-    expect(schedule).toEqual({ subject: '数学', student_name: '张三', version: 2 });
+    const schedule = await env.DB.prepare('SELECT subject, version FROM schedules WHERE id = 10')
+      .first<{ subject: string; version: number }>();
+    expect(schedule).toEqual({ subject: '数学', version: 2 });
     const members = await env.DB.prepare(
       'SELECT student_name, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
     ).all<{ student_name: string; position: number }>();
@@ -310,7 +310,7 @@ describe('API 权限与幂等性', () => {
     await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = 3')
       .bind(await hashPassword('12345')).run();
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
     await env.DB.prepare(
       "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0)",
@@ -395,7 +395,7 @@ describe('API 权限与幂等性', () => {
 
   it('筛选数量变化时不删除任何课程', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
     const response = await api('/api/schedules/bulk-delete', adminCookie, {
       method: 'POST',

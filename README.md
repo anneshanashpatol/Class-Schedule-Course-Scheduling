@@ -7,13 +7,15 @@
 需要 Node.js 22。首次运行：
 
 ```powershell
-npm install
+npm clean-install
 npm run db:migrate:local
 $env:ADMIN_NAME='admin'
 $env:ADMIN_PASSWORD='请改成至少8位的本地密码'
 npm run admin:create
 npm run dev
 ```
+
+`npm clean-install` 会严格按照仓库中的 `package-lock.json` 安装已验证的依赖组合。只有主动升级依赖时才运行 `npm install`，并应将更新后的 `package.json` 与 `package-lock.json` 一起提交。
 
 打开终端输出的本地地址。公开注册只提供教师和学生身份；管理员通过 `admin:create` 初始化。重复执行管理员创建命令时，如果姓名已经存在，数据库会拒绝重复账号。
 

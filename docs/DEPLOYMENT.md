@@ -47,11 +47,11 @@ Cloudflare 表单中的 Build command 和 Deploy command 会由 Cloudflare 的�
 1. 打开 GitHub Desktop 并登录 GitHub。
 2. 选择 **File → Add local repository**。
 3. Local path 选择你克隆或保存源码的项目文件夹。
-4. 如果左侧有待提交文件，确认没有 `node_modules`、`dist`、`.wrangler`、`.env` 或 `wrangler.production.jsonc`。
+4. 如果左侧有待提交文件，确认 `package.json` 和 `package-lock.json` 一起提交，同时没有 `node_modules`、`dist`、`.wrangler`、`.env` 或 `wrangler.production.jsonc`。
 5. 填写 Summary，点击 **Commit to main**。
 6. 点击 **Publish repository**。本项目目标仓库名为 `Class-Schedule-Course-Scheduling`；复制本项目时也可以使用自己的仓库名。
 7. 私人业务项目建议勾选 **Keep this code private**。
-8. 点击 **View on GitHub**，确认仓库根目录直接包含 `package.json`、`wrangler.jsonc`、`src`、`worker`、`migrations` 和 `scripts`。
+8. 点击 **View on GitHub**，确认仓库根目录直接包含 `package.json`、`package-lock.json`、`wrangler.jsonc`、`src`、`worker`、`migrations` 和 `scripts`。
 
 不要只上传 ZIP，也不要在仓库外再多包一层目录。
 
@@ -229,7 +229,7 @@ https://course-scheduler.<你的子域>.workers.dev
 5. Cloudflare 自动构建、执行尚未应用的迁移并发布；
 6. 在 Worker 的 **Deployments / Build history** 查看结果。
 
-不要修改已经在生产执行过的迁移文件。数据库结构变化应新增编号更大的 SQL 文件；重要变更前先备份。回退 Worker 代码不会自动回退 D1 数据。
+依赖有变化时，`package.json` 和 `package-lock.json` 必须在同一次提交中更新；不要删除锁文件，也不要用 `--force` 或 `--legacy-peer-deps` 绕过冲突。不要修改已经在生产执行过的迁移文件。数据库结构变化应新增编号更大的 SQL 文件；重要变更前先备份。回退 Worker 代码不会自动回退 D1 数据。
 
 ## 十一、自定义域名（可选）
 
@@ -257,6 +257,7 @@ https://course-scheduler.<你的子域>.workers.dev
 
 | 现象 | 处理方法 |
 | --- | --- |
+| 安装阶段出现 `npm ERESOLVE` | 确认已拉取最新 `main`，并且 `package.json` 与 `package-lock.json` 来自同一次提交；不要使用 `--force` 或 `--legacy-peer-deps`，修复依赖和锁文件后重新构建 |
 | 提示缺少 `BUILD_D1_DATABASE_ID` | Worker → Settings → Builds → Variables and secrets 添加真实 D1 UUID，再重试 |
 | D1 migration 报无权限 | 给 Builds 使用的 API token 添加 Account → D1 → Edit |
 | Worker 名称不一致 | 导入页面名称与 `BUILD_WORKER_NAME` 保持一致；默认都用 `course-scheduler` |

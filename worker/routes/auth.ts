@@ -108,6 +108,29 @@ auth.get('/me', requireAuth, async (c) => {
   return c.json({ data: { ...user, ...profile } });
 });
 
+auth.patch('/profile', requireAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  if (user.role === 'TEACHER') {
+    const input = z.object({ subject: z.string().trim().max(100) }).safeParse(body);
+    if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '科目信息有误');
+    await c.env.DB.prepare('UPDATE teacher_profiles SET subject = ? WHERE user_id = ?')
+      .bind(input.data.subject, user.id).run();
+    return c.json({ data: { subject: input.data.subject } });
+  }
+  if (user.role === 'STUDENT') {
+    const input = z.object({
+      school: z.string().trim().max(100),
+      grade: z.string().trim().max(50),
+    }).safeParse(body);
+    if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '学校或年级信息有误');
+    await c.env.DB.prepare('UPDATE student_profiles SET school = ?, grade = ? WHERE user_id = ?')
+      .bind(input.data.school, input.data.grade, user.id).run();
+    return c.json({ data: { school: input.data.school, grade: input.data.grade } });
+  }
+  throw new AppError(403, 'PROFILE_NOT_EDITABLE', '管理员没有可编辑的角色资料');
+});
+
 auth.post('/logout', requireAuth, async (c) => {
   await c.env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(c.get('sessionTokenHash')).run();
   deleteCookie(c, 'session', { path: '/' });

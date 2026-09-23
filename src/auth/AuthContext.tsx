@@ -10,6 +10,7 @@ interface AuthContextValue {
   register: (username: string, password: string, role: Exclude<Role, 'ADMIN'>) => Promise<void>;
   logout: () => Promise<void>;
   clearSession: () => void;
+  updateUser: (updates: Partial<AuthUser>) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -24,6 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     register: async (username, password, role) => setUser(await api<AuthUser>('/auth/register', { method: 'POST', body: JSON.stringify({ username, password, role }) })),
     logout: async () => { await api('/auth/logout', { method: 'POST' }); setUser(null); },
     clearSession: () => setUser(null),
+    updateUser: (updates) => setUser((current) => current ? { ...current, ...updates } : current),
   }), [user, loading]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

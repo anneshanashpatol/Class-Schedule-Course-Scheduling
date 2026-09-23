@@ -7,6 +7,7 @@ import { compactStudentNames, ScheduleDialog } from '../components/ScheduleDialo
 import { Button, EmptyState, Field, Input, LoadingState, Notice, Select } from '../components/ui';
 import { useScheduleOptions } from '../hooks/useScheduleOptions';
 import { api, queryString } from '../lib/api';
+import { SCHEDULE_EXPORT_BATCH_SIZE } from '../lib/export';
 import type { Schedule, ScheduleFilters } from '../types';
 
 const emptyFilters: ScheduleFilters = { teacherId: '', studentId: '', dateFrom: '', dateTo: '', subject: '', classroom: '', completed: '' };
@@ -73,9 +74,9 @@ export function SchedulesPage() {
           rows.push(...await api<Schedule[]>(`/schedules/export-data?${queryString({ ids: ids.slice(offset, offset + 80).join(','), limit: 80 })}`));
         }
       } else {
-        for (let offset = 0; ; offset += 500) {
-          const batch = await api<Schedule[]>(`/schedules/export-data?${queryString({ ...applied, offset, limit: 500 })}`);
-          rows.push(...batch); if (batch.length < 500) break;
+        for (let offset = 0; ; offset += SCHEDULE_EXPORT_BATCH_SIZE) {
+          const batch = await api<Schedule[]>(`/schedules/export-data?${queryString({ ...applied, offset, limit: SCHEDULE_EXPORT_BATCH_SIZE })}`);
+          rows.push(...batch); if (batch.length < SCHEDULE_EXPORT_BATCH_SIZE) break;
         }
       }
       const { Workbook } = await import('exceljs');

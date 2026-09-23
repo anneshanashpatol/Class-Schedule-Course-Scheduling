@@ -239,6 +239,24 @@ describe('API 权限与幂等性', () => {
     expect(valid.status).toBe(201);
   });
 
+  it('注册会原子创建账号、角色资料和登录会话', async () => {
+    const response = await SELF.fetch(`${origin}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '新教师', password: '12345', role: 'TEACHER' }),
+    });
+    const body = await response.json<{ data: { id: number } }>();
+    expect(response.status).toBe(201);
+
+    const account = await env.DB.prepare(
+      `SELECT u.id, tp.user_id AS profile_user_id,
+        (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) AS session_count
+       FROM users u
+       LEFT JOIN teacher_profiles tp ON tp.user_id = u.id
+       WHERE u.username = ?`,
+    ).bind('新教师').first<{ id: number; profile_user_id: number; session_count: number }>();
+    expect(account).toEqual({ id: body.data.id, profile_user_id: body.data.id, session_count: 1 });
+  });
+
   it('删除用户后隐藏账号、撤销会话、保留历史并释放姓名', async () => {
     await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = 3')
       .bind(await hashPassword('12345')).run();

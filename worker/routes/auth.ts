@@ -48,8 +48,11 @@ auth.post('/register', async (c) => {
       'INSERT INTO users (username, display_name, password_hash, role) VALUES (?, ?, ?, ?)',
     ).bind(username, username, passwordHash, input.data.role),
     c.env.DB.prepare(
-      "INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (last_insert_rowid(), ?, datetime('now', '+14 days'))",
-    ).bind(tokenHash),
+      `INSERT INTO sessions (user_id, token_hash, expires_at)
+       SELECT id, ?, datetime('now', '+14 days')
+       FROM users
+       WHERE username = ? COLLATE NOCASE AND deleted_at IS NULL`,
+    ).bind(tokenHash, username),
   ]);
   const userId = Number(result[0].meta.last_row_id);
   setCookie(c, 'session', token, cookieOptions(c.env.APP_ENV === 'production'));

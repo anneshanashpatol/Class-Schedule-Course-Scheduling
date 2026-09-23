@@ -79,47 +79,47 @@ CREATE INDEX idx_sessions_expiry ON sessions(expires_at);
 CREATE TRIGGER schedules_validate_people_insert
 BEFORE INSERT ON schedules
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM users WHERE id = NEW.teacher_id AND role = 'TEACHER' AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'TEACHER_NOT_ACTIVE') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'TEACHER_NOT_ACTIVE') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM users WHERE id = NEW.student_id AND role = 'STUDENT' AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'STUDENT_NOT_ACTIVE') END;
+  ) THEN RAISE(ABORT, 'STUDENT_NOT_ACTIVE') END);
 END;
 
 CREATE TRIGGER schedules_validate_people_update
 BEFORE UPDATE OF teacher_id, student_id, class_date, start_time, end_time ON schedules
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM users WHERE id = NEW.teacher_id AND role = 'TEACHER' AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'TEACHER_NOT_ACTIVE') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'TEACHER_NOT_ACTIVE') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM users WHERE id = NEW.student_id AND role = 'STUDENT' AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'STUDENT_NOT_ACTIVE') END;
+  ) THEN RAISE(ABORT, 'STUDENT_NOT_ACTIVE') END);
 END;
 
 CREATE TRIGGER schedules_prevent_conflict_insert
 BEFORE INSERT ON schedules
 BEGIN
-  SELECT CASE WHEN EXISTS (
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM schedules s
     WHERE s.class_date = NEW.class_date
       AND s.start_time < NEW.end_time AND s.end_time > NEW.start_time
       AND (s.teacher_id = NEW.teacher_id OR s.student_id = NEW.student_id
         OR (trim(NEW.classroom) != '' AND s.classroom = NEW.classroom))
-  ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END;
+  ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END);
 END;
 
 CREATE TRIGGER schedules_prevent_conflict_update
 BEFORE UPDATE OF teacher_id, student_id, class_date, start_time, end_time, classroom ON schedules
 BEGIN
-  SELECT CASE WHEN EXISTS (
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM schedules s
     WHERE s.id != NEW.id AND s.class_date = NEW.class_date
       AND s.start_time < NEW.end_time AND s.end_time > NEW.start_time
       AND (s.teacher_id = NEW.teacher_id OR s.student_id = NEW.student_id
         OR (trim(NEW.classroom) != '' AND s.classroom = NEW.classroom))
-  ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END;
+  ) THEN RAISE(ABORT, 'SCHEDULE_CONFLICT') END);
 END;
 
 CREATE TRIGGER schedules_lock_completed
@@ -155,4 +155,3 @@ BEGIN
       LIMIT 20
     );
 END;
-

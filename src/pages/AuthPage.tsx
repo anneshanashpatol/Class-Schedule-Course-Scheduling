@@ -3,6 +3,7 @@ import { CalendarDays, CheckCircle2, Clock3 } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { Button, Field, Input, LoadingState, Notice, Select } from '../components/ui';
+import { authenticatedLandingPath, MOBILE_MEDIA_QUERY } from '../lib/navigation';
 import type { Role } from '../types';
 
 export function AuthPage() {
@@ -15,7 +16,7 @@ export function AuthPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   if (loading) return <main className="center-page"><LoadingState /></main>;
-  if (user) return <Navigate to="/calendar" replace />;
+  if (user) return <Navigate to={authenticatedLandingPath(window.matchMedia(MOBILE_MEDIA_QUERY).matches)} replace />;
   async function submit(event: FormEvent) {
     event.preventDefault(); setError('');
     if (mode === 'register' && password !== confirmPassword) { setError('两次输入的密码不一致'); return; }

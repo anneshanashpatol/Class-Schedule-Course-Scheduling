@@ -33,9 +33,9 @@ END;
 
 DROP TRIGGER schedules_lock_completed;
 CREATE TRIGGER schedules_lock_completed
-BEFORE UPDATE OF student_id, class_date, start_time, end_time, lesson_hundredths ON schedules
+BEFORE UPDATE OF student_name, class_date, start_time, end_time, lesson_hundredths ON schedules
 WHEN OLD.is_completed = 1 AND (
-  OLD.student_id != NEW.student_id OR OLD.class_date != NEW.class_date
+  OLD.student_name != NEW.student_name COLLATE NOCASE OR OLD.class_date != NEW.class_date
   OR OLD.start_time != NEW.start_time OR OLD.end_time != NEW.end_time
   OR OLD.lesson_hundredths != NEW.lesson_hundredths
 )

@@ -15,20 +15,20 @@ async function seedPeople() {
   ]);
 }
 
-async function addMembers(scheduleId: number, ...studentIds: number[]) {
-  await env.DB.batch(studentIds.map((studentId, position) => env.DB.prepare(
-    'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (?, ?, ?)',
-  ).bind(scheduleId, studentId, position)));
+async function addMembers(scheduleId: number, ...studentNames: string[]) {
+  await env.DB.batch(studentNames.map((studentName, position) => env.DB.prepare(
+    'INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (?, ?, ?)',
+  ).bind(scheduleId, studentName, position)));
 }
 
 describe('D1 排课约束', () => {
   it('完课扣减、重复状态不重复扣减、取消完课返还', async () => {
     await seedPeople();
     await env.DB.prepare(
-      `INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time,
-       lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:30', 150, 1)`,
+      `INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time,
+       lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:30', 150, 1)`,
     ).run();
-    await addMembers(10, 3, 5);
+    await addMembers(10, '张三', '李四');
     await env.DB.prepare('UPDATE schedules SET is_completed = 1, version = version + 1 WHERE id = 10').run();
     await env.DB.prepare('UPDATE schedules SET is_completed = 1, version = version + 1 WHERE id = 10').run();
     const completedBalances = await env.DB.prepare(
@@ -51,24 +51,24 @@ describe('D1 排课约束', () => {
   it('阻止重叠课程但允许首尾相接', async () => {
     await seedPeople();
     await env.DB.prepare(
-      "INSERT INTO schedules (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES ('王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
     const firstId = Number((await env.DB.prepare('SELECT id FROM schedules ORDER BY id LIMIT 1').first<{ id: number }>())?.id);
-    await addMembers(firstId, 3);
+    await addMembers(firstId, '张三');
     await expect(env.DB.prepare(
-      "INSERT INTO schedules (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (2, 3, '数学', '2026-09-22', '09:59', '11:00', 102, 1)",
+      "INSERT INTO schedules (teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES ('王老师', '张三', '数学', '2026-09-22', '09:59', '11:00', 102, 1)",
     ).run()).rejects.toThrow('SCHEDULE_CONFLICT');
     await expect(env.DB.prepare(
-      "INSERT INTO schedules (teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (2, 3, '数学', '2026-09-22', '10:00', '11:00', 100, 1)",
+      "INSERT INTO schedules (teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES ('王老师', '张三', '数学', '2026-09-22', '10:00', '11:00', 100, 1)",
     ).run()).resolves.toBeDefined();
   });
 
   it('删除已完课课程不返还课时', async () => {
     await seedPeople();
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
-    await addMembers(10, 3, 5);
+    await addMembers(10, '张三', '李四');
     await env.DB.prepare('UPDATE schedules SET is_completed = 1 WHERE id = 10').run();
     await env.DB.prepare('DELETE FROM schedules WHERE id = 10').run();
     const balances = await env.DB.prepare(
@@ -83,10 +83,10 @@ describe('D1 排课约束', () => {
   it('已完课课程锁定学生与时间', async () => {
     await seedPeople();
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, is_completed, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1, 1)",
+      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, is_completed, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1, 1)",
     ).run();
     await env.DB.prepare('UPDATE schedules SET is_completed = 0 WHERE id = 10').run();
-    await addMembers(10, 3, 5);
+    await addMembers(10, '张三', '李四');
     await env.DB.prepare('UPDATE schedules SET is_completed = 1 WHERE id = 10').run();
     await expect(env.DB.prepare("UPDATE schedules SET start_time = '08:30' WHERE id = 10").run())
       .rejects.toThrow('COMPLETED_SCHEDULE_LOCKED');

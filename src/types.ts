@@ -17,9 +17,6 @@ export interface AuthUser {
 
 export interface Schedule {
   id: number;
-  teacher_id: number;
-  student_id: number;
-  student_ids?: number[];
   teacher_name: string;
   student_name: string;
   student_names?: string[];

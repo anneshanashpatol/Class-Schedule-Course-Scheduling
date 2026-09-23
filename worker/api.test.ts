@@ -41,17 +41,47 @@ describe('API 权限与幂等性', () => {
     studentCookie = await cookieFor(3, 'student-token');
   });
 
-  it('教师伪造其他教师 ID 时仍只能为自己排课', async () => {
+  it('教师排课时教师姓名固定为自己', async () => {
     const response = await api('/api/schedules', teacherCookie, {
       method: 'POST',
       body: JSON.stringify({
-        teacherId: 4, studentId: 3, subject: '数学', classDate: '2026-09-22',
+        teacherName: '李老师', studentNames: ['张三'], subject: '数学', classDate: '2026-09-22',
         startTime: '09:00', endTime: '10:00', classroom: 'A101',
       }),
     });
     expect(response.status).toBe(201);
-    const stored = await env.DB.prepare('SELECT teacher_id FROM schedules').first<{ teacher_id: number }>();
-    expect(stored?.teacher_id).toBe(2);
+    const stored = await env.DB.prepare('SELECT teacher_name FROM schedules').first<{ teacher_name: string }>();
+    expect(stored?.teacher_name).toBe('王老师');
+  });
+
+  it('无账号姓名可先排课，账号注册后自动获得课程可见性', async () => {
+    const created = await api('/api/schedules', adminCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        teacherName: '未来老师', studentNames: ['未来学生'], subject: '科学', classDate: '2026-09-24',
+        startTime: '09:00', endTime: '10:00', classroom: '',
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect((await (await api('/api/schedules', adminCookie)).json<{ data: unknown[] }>()).data).toHaveLength(1);
+    expect((await (await api('/api/schedules', teacherCookie)).json<{ data: unknown[] }>()).data).toHaveLength(0);
+    expect((await (await api('/api/schedules', studentCookie)).json<{ data: unknown[] }>()).data).toHaveLength(0);
+
+    const teacherRegistration = await SELF.fetch(`${origin}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '未来老师', password: '12345', role: 'TEACHER' }),
+    });
+    const studentRegistration = await SELF.fetch(`${origin}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '未来学生', password: '12345', role: 'STUDENT' }),
+    });
+    const teacherId = (await teacherRegistration.json<{ data: { id: number } }>()).data.id;
+    const studentId = (await studentRegistration.json<{ data: { id: number } }>()).data.id;
+    const futureTeacherCookie = await cookieFor(teacherId, 'future-teacher-token');
+    const futureStudentCookie = await cookieFor(studentId, 'future-student-token');
+
+    expect((await (await api('/api/schedules', futureTeacherCookie)).json<{ data: unknown[] }>()).data).toHaveLength(1);
+    expect((await (await api('/api/schedules', futureStudentCookie)).json<{ data: unknown[] }>()).data).toHaveLength(1);
   });
 
   it('学生不能写入排课，教师不能批量删除', async () => {
@@ -68,10 +98,10 @@ describe('API 权限与幂等性', () => {
 
   it('重复完课请求只扣减一次余额', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:30', 150, 1)",
+      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:30', 150, 1)",
     ).run();
     await env.DB.prepare(
-      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0), (10, 5, 1)',
+      "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0), (10, '李四', 1)",
     ).run();
     const first = await api('/api/schedules/10/completion', teacherCookie, {
       method: 'PATCH', body: JSON.stringify({ completed: true, version: 1 }),
@@ -92,16 +122,16 @@ describe('API 权限与幂等性', () => {
 
   it('多学生创建失败时原子回滚课程和成员', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 4, 5, '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '李老师', '李四', '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
     await env.DB.prepare(
-      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 5, 0)',
+      "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '李四', 0)",
     ).run();
 
     const response = await api('/api/schedules', adminCookie, {
       method: 'POST',
       body: JSON.stringify({
-        teacherId: 2, studentIds: [3, 5], subject: '数学', classDate: '2026-09-22',
+        teacherName: '王老师', studentNames: ['张三', '李四'], subject: '数学', classDate: '2026-09-22',
         startTime: '09:00', endTime: '10:00', classroom: 'A101',
       }),
     });
@@ -109,66 +139,66 @@ describe('API 权限与幂等性', () => {
     expect(response.status).toBe(409);
     expect((await env.DB.prepare('SELECT COUNT(*) AS total FROM schedules').first<{ total: number }>())?.total).toBe(1);
     const members = await env.DB.prepare(
-      'SELECT schedule_id, student_id FROM schedule_students ORDER BY schedule_id, position',
-    ).all<{ schedule_id: number; student_id: number }>();
-    expect(members.results).toEqual([{ schedule_id: 10, student_id: 5 }]);
+      'SELECT schedule_id, student_name FROM schedule_students ORDER BY schedule_id, position',
+    ).all<{ schedule_id: number; student_name: string }>();
+    expect(members.results).toEqual([{ schedule_id: 10, student_name: '李四' }]);
   });
 
   it('多学生更新失败时原子恢复原成员和课程版本', async () => {
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+        "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
       ),
       env.DB.prepare(
-        "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (11, 4, 5, '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
+        "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (11, '李老师', '李四', '英语', '2026-09-22', '09:00', '10:00', 100, 1)",
       ),
       env.DB.prepare(
-        'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0), (11, 5, 0)',
+        "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0), (11, '李四', 0)",
       ),
     ]);
 
     const response = await api('/api/schedules/10', teacherCookie, {
       method: 'PATCH',
       body: JSON.stringify({
-        studentIds: [3, 5], subject: '数学', classDate: '2026-09-22',
+        studentNames: ['张三', '李四'], subject: '数学', classDate: '2026-09-22',
         startTime: '09:00', endTime: '10:00', classroom: '', version: 1,
       }),
     });
 
     expect(response.status).toBe(409);
-    const schedule = await env.DB.prepare('SELECT student_id, version FROM schedules WHERE id = 10')
-      .first<{ student_id: number; version: number }>();
-    expect(schedule).toEqual({ student_id: 3, version: 1 });
+    const schedule = await env.DB.prepare('SELECT student_name, version FROM schedules WHERE id = 10')
+      .first<{ student_name: string; version: number }>();
+    expect(schedule).toEqual({ student_name: '张三', version: 1 });
     const members = await env.DB.prepare(
-      'SELECT student_id, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
-    ).all<{ student_id: number; position: number }>();
-    expect(members.results).toEqual([{ student_id: 3, position: 0 }]);
+      'SELECT student_name, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
+    ).all<{ student_name: string; position: number }>();
+    expect(members.results).toEqual([{ student_name: '张三', position: 0 }]);
   });
 
   it('成员更新遇到过期版本时不改课程或成员', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, version, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 2, 1)",
+      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, version, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 2, 1)",
     ).run();
     await env.DB.prepare(
-      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0)',
+      "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0)",
     ).run();
 
     const response = await api('/api/schedules/10', teacherCookie, {
       method: 'PATCH',
       body: JSON.stringify({
-        studentIds: [3, 5], subject: '改名后的数学', classDate: '2026-09-22',
+        studentNames: ['张三', '李四'], subject: '改名后的数学', classDate: '2026-09-22',
         startTime: '09:00', endTime: '10:00', classroom: '', version: 1,
       }),
     });
 
     expect(response.status).toBe(409);
-    const schedule = await env.DB.prepare('SELECT subject, student_id, version FROM schedules WHERE id = 10')
-      .first<{ subject: string; student_id: number; version: number }>();
-    expect(schedule).toEqual({ subject: '数学', student_id: 3, version: 2 });
+    const schedule = await env.DB.prepare('SELECT subject, student_name, version FROM schedules WHERE id = 10')
+      .first<{ subject: string; student_name: string; version: number }>();
+    expect(schedule).toEqual({ subject: '数学', student_name: '张三', version: 2 });
     const members = await env.DB.prepare(
-      'SELECT student_id, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
-    ).all<{ student_id: number; position: number }>();
-    expect(members.results).toEqual([{ student_id: 3, position: 0 }]);
+      'SELECT student_name, position FROM schedule_students WHERE schedule_id = 10 ORDER BY position',
+    ).all<{ student_name: string; position: number }>();
+    expect(members.results).toEqual([{ student_name: '张三', position: 0 }]);
   });
 
   it('管理员停用账号后立即撤销其会话', async () => {
@@ -261,10 +291,10 @@ describe('API 权限与幂等性', () => {
     await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = 3')
       .bind(await hashPassword('12345')).run();
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
     await env.DB.prepare(
-      'INSERT INTO schedule_students (schedule_id, student_id, position) VALUES (10, 3, 0)',
+      "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0)",
     ).run();
 
     const deleted = await api('/api/users/3', adminCookie, { method: 'DELETE' });
@@ -300,25 +330,25 @@ describe('API 权限与幂等性', () => {
     });
     expect(replacement.status).toBe(201);
 
-    const cannotScheduleDeletedStudent = await api('/api/schedules', adminCookie, {
+    const canScheduleByNameWithoutStudentAccount = await api('/api/schedules', adminCookie, {
       method: 'POST',
       body: JSON.stringify({
-        teacherId: 4, studentIds: [3], subject: '英语', classDate: '2026-09-23',
+        teacherName: '李老师', studentNames: ['张三'], subject: '英语', classDate: '2026-09-23',
         startTime: '09:00', endTime: '10:00', classroom: '',
       }),
     });
-    expect(cannotScheduleDeletedStudent.status).toBe(409);
+    expect(canScheduleByNameWithoutStudentAccount.status).toBe(201);
 
     const deletedTeacher = await api('/api/users/2', adminCookie, { method: 'DELETE' });
     expect(deletedTeacher.status).toBe(200);
-    const cannotScheduleDeletedTeacher = await api('/api/schedules', adminCookie, {
+    const canScheduleByNameWithoutTeacherAccount = await api('/api/schedules', adminCookie, {
       method: 'POST',
       body: JSON.stringify({
-        teacherId: 2, studentIds: [5], subject: '数学', classDate: '2026-09-23',
+        teacherName: '王老师', studentNames: ['李四'], subject: '数学', classDate: '2026-09-23',
         startTime: '10:00', endTime: '11:00', classroom: '',
       }),
     });
-    expect(cannotScheduleDeletedTeacher.status).toBe(409);
+    expect(canScheduleByNameWithoutTeacherAccount.status).toBe(201);
   });
 
   it('拒绝跨站写请求', async () => {
@@ -346,7 +376,7 @@ describe('API 权限与幂等性', () => {
 
   it('筛选数量变化时不删除任何课程', async () => {
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_id, student_id, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, 2, 3, '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+      "INSERT INTO schedules (id, teacher_name, student_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '张三', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
     ).run();
     const response = await api('/api/schedules/bulk-delete', adminCookie, {
       method: 'POST',

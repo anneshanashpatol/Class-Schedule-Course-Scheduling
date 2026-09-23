@@ -63,27 +63,13 @@ function escapeLike(value: string) {
 function buildWhere(user: AuthUser, filters: Filters, alias = 's') {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  const fullyMatched = `EXISTS (
-    SELECT 1 FROM users matched_teacher
-    WHERE matched_teacher.role = 'TEACHER' AND matched_teacher.status = 'ACTIVE' AND matched_teacher.deleted_at IS NULL
-      AND matched_teacher.display_name = ${alias}.teacher_name COLLATE NOCASE
-  ) AND NOT EXISTS (
-    SELECT 1 FROM schedule_students required_student
-    WHERE required_student.schedule_id = ${alias}.id AND NOT EXISTS (
-      SELECT 1 FROM users matched_student
-      WHERE matched_student.role = 'STUDENT' AND matched_student.status = 'ACTIVE' AND matched_student.deleted_at IS NULL
-        AND matched_student.display_name = required_student.student_name COLLATE NOCASE
-    )
-  )`;
   if (user.role === 'TEACHER') {
     clauses.push(`${alias}.teacher_name = ? COLLATE NOCASE`);
     params.push(user.displayName);
-    clauses.push(fullyMatched);
   }
   if (user.role === 'STUDENT') {
     clauses.push(`EXISTS (SELECT 1 FROM schedule_students scoped_students WHERE scoped_students.schedule_id = ${alias}.id AND scoped_students.student_name = ? COLLATE NOCASE)`);
     params.push(user.displayName);
-    clauses.push(fullyMatched);
   }
   if (user.role === 'ADMIN' && filters.teacherName) {
     clauses.push(`${alias}.teacher_name = ? COLLATE NOCASE`);

@@ -67,21 +67,21 @@ describe('API 权限与幂等性', () => {
     expect((await (await api('/api/schedules', teacherCookie)).json<{ data: unknown[] }>()).data).toHaveLength(0);
     expect((await (await api('/api/schedules', studentCookie)).json<{ data: unknown[] }>()).data).toHaveLength(0);
 
-    const teacherRegistration = await SELF.fetch(`${origin}/api/auth/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
-      body: JSON.stringify({ username: '未来老师', password: '12345', role: 'TEACHER' }),
-    });
     const studentRegistration = await SELF.fetch(`${origin}/api/auth/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
       body: JSON.stringify({ username: '未来学生', password: '12345', role: 'STUDENT' }),
     });
-    const teacherId = (await teacherRegistration.json<{ data: { id: number } }>()).data.id;
     const studentId = (await studentRegistration.json<{ data: { id: number } }>()).data.id;
-    const futureTeacherCookie = await cookieFor(teacherId, 'future-teacher-token');
     const futureStudentCookie = await cookieFor(studentId, 'future-student-token');
-
-    expect((await (await api('/api/schedules', futureTeacherCookie)).json<{ data: unknown[] }>()).data).toHaveLength(1);
     expect((await (await api('/api/schedules', futureStudentCookie)).json<{ data: unknown[] }>()).data).toHaveLength(1);
+
+    const teacherRegistration = await SELF.fetch(`${origin}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ username: '未来老师', password: '12345', role: 'TEACHER' }),
+    });
+    const teacherId = (await teacherRegistration.json<{ data: { id: number } }>()).data.id;
+    const futureTeacherCookie = await cookieFor(teacherId, 'future-teacher-token');
+    expect((await (await api('/api/schedules', futureTeacherCookie)).json<{ data: unknown[] }>()).data).toHaveLength(1);
   });
 
   it('学生不能写入排课，教师不能批量删除', async () => {

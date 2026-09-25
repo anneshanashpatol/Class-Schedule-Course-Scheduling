@@ -7,6 +7,10 @@ import { Button, Dialog, Field, Input, Notice, Textarea } from './ui';
 export interface AdjustmentStudent { id: number; name: string; remainingHundredths: number }
 interface Adjustment { id: number; amount_hundredths: number; note: string; created_at: string; operator_name: string }
 
+function formatAdjustmentTime(utcTime: string) {
+  return new Date(`${utcTime.replace(' ', 'T')}Z`).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+
 export function AdjustmentDialog({ item, onClose, onSaved }: { item: AdjustmentStudent | null; onClose: () => void; onSaved: (remainingHundredths: number) => void }) {
   const [hours, setHours] = useState('');
   const [direction, setDirection] = useState<'add' | 'subtract'>('add');
@@ -47,6 +51,6 @@ export function AdjustmentDialog({ item, onClose, onSaved }: { item: AdjustmentS
       <Field label="调整备注"><Textarea required maxLength={200} rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="说明调整原因" /></Field>
       <footer><Button type="button" variant="secondary" onClick={onClose}>取消</Button><Button disabled={busy}>确认调整</Button></footer>
     </form>
-    <div className="adjust-history"><h3>最近调整记录</h3>{records.length ? <ul>{records.map((record) => <li key={record.id}><span className={record.amount_hundredths > 0 ? 'positive' : 'negative'}>{record.amount_hundredths > 0 ? '+' : ''}{record.amount_hundredths / 100}</span><div><strong>{record.note}</strong><small>{record.operator_name} · {new Date(record.created_at).toLocaleString('zh-CN')}</small></div></li>)}</ul> : <p>暂无人工调整记录</p>}</div>
+    <div className="adjust-history"><h3>最近调整记录</h3>{records.length ? <ul>{records.map((record) => <li key={record.id}><span className={record.amount_hundredths > 0 ? 'positive' : 'negative'}>{record.amount_hundredths > 0 ? '+' : ''}{record.amount_hundredths / 100}</span><div><strong>{record.note}</strong><small>{record.operator_name} · {formatAdjustmentTime(record.created_at)}</small></div></li>)}</ul> : <p>暂无人工调整记录</p>}</div>
   </Dialog>;
 }

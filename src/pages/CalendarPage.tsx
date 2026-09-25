@@ -2,7 +2,8 @@
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import isoWeek from 'dayjs/plugin/isoWeek';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { teacherNameForViewer } from '../../shared/teacherName';
+import { Check, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { compactStudentNames, ScheduleDialog } from '../components/ScheduleDialog';
@@ -43,7 +44,7 @@ export function CalendarPage() {
   const weekStart = anchor.startOf('isoWeek');
   const weekStartKey = weekStart.format('YYYY-MM-DD');
   const weekDays = Array.from({ length: 7 }, (_, index) => weekStart.add(index, 'day'));
-  const canEdit = user?.role !== 'STUDENT';
+  const canEdit = user?.role === 'ADMIN';
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -71,7 +72,7 @@ export function CalendarPage() {
   function changed() { setDialog(null); void load(); }
 
   return <div className="page">
-    <header className="page-header"><div><p className="eyebrow">教学日程</p><h1>课程表</h1><p>你好，{user?.displayName}。点击日期空白处即可排课，点击课程查看详情。</p></div><div className="calendar-controls"><Button variant="secondary" onClick={() => setAnchor(dayjs())}>今天</Button><span className="desktop-calendar-controls"><button className="icon-button bordered" aria-label="上一周" onClick={() => setAnchor(anchor.subtract(1, 'week'))}><ChevronLeft /></button><button className="icon-button bordered" aria-label="下一周" onClick={() => setAnchor(anchor.add(1, 'week'))}><ChevronRight /></button></span><span className="mobile-calendar-controls"><button className="icon-button bordered" aria-label="前一天" onClick={() => setAnchor(anchor.subtract(1, 'day'))}><ChevronLeft /></button><button className="icon-button bordered" aria-label="后一天" onClick={() => setAnchor(anchor.add(1, 'day'))}><ChevronRight /></button></span></div></header>
+    <header className="page-header"><div><p className="eyebrow">教学日程</p><h1>课程表</h1><p>你好，{user?.displayName}。{canEdit ? '点击日期空白处即可排课，点击课程查看详情。' : '点击课程查看详情。'}</p></div><div className="calendar-controls"><Button variant="secondary" onClick={() => setAnchor(dayjs())}>今天</Button><span className="desktop-calendar-controls"><button className="icon-button bordered" aria-label="上一周" onClick={() => setAnchor(anchor.subtract(1, 'week'))}><ChevronLeft /></button><button className="icon-button bordered" aria-label="下一周" onClick={() => setAnchor(anchor.add(1, 'week'))}><ChevronRight /></button></span><span className="mobile-calendar-controls"><button className="icon-button bordered" aria-label="前一天" onClick={() => setAnchor(anchor.subtract(1, 'day'))}><ChevronLeft /></button><button className="icon-button bordered" aria-label="后一天" onClick={() => setAnchor(anchor.add(1, 'day'))}><ChevronRight /></button></span></div></header>
     <div className="calendar-heading">
       <div className="calendar-heading__range"><strong>{anchor.format('YYYY年M月')}</strong><span className="desktop-week-label">{weekStart.format('M月D日')} — {weekStart.add(6, 'day').format('M月D日')}</span><span className="mobile-day-label">{anchor.format('M月D日 dddd')}</span></div>
       <label className="calendar-date-picker"><span>选择日期</span><input type="date" value={activeDateKey} onChange={(event) => { if (event.target.value) setAnchor(dayjs(event.target.value)); }} /></label>
@@ -102,8 +103,9 @@ function CalendarPeriod({ label, hideLabel = false, items, canEdit, onBlank, onO
 }
 
 function CourseCard({ item, onOpen }: { item: Schedule; onOpen: () => void }) {
+  const { user } = useAuth();
   const allStudents = item.student_names.join('、');
   return <button type="button" className={`course-card course-card--${subjectColor(item.subject)}`} onClick={(event) => { event.stopPropagation(); onOpen(); }}>
-    <span className="course-card__time">{item.start_time}–{item.end_time}</span><strong>{item.subject}</strong><span>{item.teacher_name}</span><span title={allStudents}>{compactStudentNames(item)}</span>{item.classroom && <span>{item.classroom}</span>}<em>{item.is_completed ? '已完课' : '待上课'}</em>
+    <span className="course-card__time">{item.start_time}–{item.end_time}</span><strong>{item.subject}</strong><span className="course-card__teacher">{teacherNameForViewer(item.teacher_name, user?.role)}</span><span className="course-card__students" title={allStudents}>{compactStudentNames(item)}</span>{item.classroom && <span>{item.classroom}</span>}<em className={item.is_completed ? 'course-card__completed' : undefined}>{item.is_completed ? <><Check size={18} strokeWidth={3} aria-hidden="true" />已完课</> : '待上课'}</em>
   </button>;
 }

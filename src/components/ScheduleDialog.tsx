@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { calculateLessonHundredths, formatLessonHours } from '../../shared/domain';
+import { teacherNameForViewer } from '../../shared/teacherName';
 import { useAuth } from '../auth/AuthContext';
 import { api } from '../lib/api';
 import type { Schedule } from '../types';
@@ -35,7 +36,8 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
   const [form, setForm] = useState(blankForm(initialDate));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const readOnly = user?.role === 'STUDENT';
+  const readOnly = user?.role !== 'ADMIN';
+  const canComplete = user?.role === 'ADMIN' || user?.role === 'TEACHER';
   const locked = Boolean(item?.is_completed);
   const lessonHundredths = useMemo(() => {
     try { return calculateLessonHundredths(form.startTime, form.endTime); } catch { return 0; }
@@ -83,7 +85,7 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
   }
 
   async function toggleCompletion() {
-    if (!item || readOnly) return;
+    if (!item || !canComplete) return;
     setBusy(true); setError('');
     try {
       await api(`/schedules/${item.id}/completion`, {
@@ -108,7 +110,7 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
       {locked && !readOnly && <div className="notice">已完课课程的学生和时间已锁定。如需调整，请先取消完课。</div>}
       <div className="form-grid">
         {user?.role === 'ADMIN' && <Field label="教师姓名" hint="可填写尚未注册账号的教师"><Input required disabled={readOnly || locked} maxLength={40} value={form.teacherName} onChange={(event) => setForm({ ...form, teacherName: event.target.value })} placeholder="输入教师姓名" /></Field>}
-        {user?.role !== 'ADMIN' && item && <Field label="教师"><Input disabled value={item.teacher_name} /></Field>}
+        {user?.role !== 'ADMIN' && item && <Field label="教师"><Input disabled value={teacherNameForViewer(item.teacher_name, user?.role)} /></Field>}
         <Field label="科目"><Input required disabled={readOnly} maxLength={100} value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} placeholder="可自由输入，如：语文" /></Field>
         <Field label="日期"><Input required disabled={readOnly || locked} type="date" value={form.classDate} onChange={(event) => setForm({ ...form, classDate: event.target.value })} /></Field>
         <Field label="开始时间"><Input required disabled={readOnly || locked} type="time" value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} /></Field>
@@ -127,7 +129,7 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
           <small>姓名对应的账号尚未注册也可以保存；账号注册后会自动看到课程。</small>
         </>}
       </fieldset>
-      <div className="completion-row"><div><strong>是否完课</strong><span>{item ? '切换后会立即扣减或返还全部学生的课时' : '新建课程默认为未完课'}</span></div><button type="button" role="switch" aria-checked={Boolean(item?.is_completed)} className={`switch ${item?.is_completed ? 'switch--on' : ''}`} disabled={!item || readOnly || busy} onClick={() => void toggleCompletion()}><span /></button></div>
+      <div className="completion-row"><div><strong>是否完课</strong><span>{item ? '切换后会立即扣减或返还全部学生的课时' : '新建课程默认为未完课'}</span></div><button type="button" role="switch" aria-label="是否完课" aria-checked={Boolean(item?.is_completed)} className={`switch ${item?.is_completed ? 'switch--on' : ''}`} disabled={!item || !canComplete || busy} onClick={() => void toggleCompletion()}><span /></button></div>
       <footer className="dialog-actions">{item && !readOnly && <Button type="button" variant="danger" className="dialog-delete" disabled={busy} onClick={() => void remove()}><Trash2 size={16} />删除课程</Button>}<Button type="button" variant="secondary" onClick={onClose}>{readOnly ? '关闭' : '取消'}</Button>{!readOnly && <Button disabled={busy}>{busy ? '保存中…' : '保存'}</Button>}</footer>
     </form>
   </Dialog>;

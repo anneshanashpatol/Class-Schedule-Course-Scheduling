@@ -41,7 +41,7 @@ describe('API 权限与幂等性', () => {
     studentCookie = await cookieFor(3, 'student-token');
   });
 
-  it('教师排课时教师姓名固定为自己', async () => {
+  it('教师不能新增、编辑或删除课程', async () => {
     const response = await api('/api/schedules', teacherCookie, {
       method: 'POST',
       body: JSON.stringify({
@@ -49,9 +49,26 @@ describe('API 权限与幂等性', () => {
         startTime: '09:00', endTime: '10:00', classroom: 'A101',
       }),
     });
-    expect(response.status).toBe(201);
-    const stored = await env.DB.prepare('SELECT teacher_name FROM schedules').first<{ teacher_name: string }>();
-    expect(stored?.teacher_name).toBe('王老师');
+    expect(response.status).toBe(403);
+    await env.DB.prepare(
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+    ).run();
+    expect((await api('/api/schedules/10', teacherCookie, { method: 'PATCH', body: '{}' })).status).toBe(403);
+    expect((await api('/api/schedules/10', teacherCookie, { method: 'DELETE' })).status).toBe(403);
+  });
+
+  it('学生课程接口只显示教师姓氏', async () => {
+    await env.DB.prepare(
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '丁小明', '数学', '2026-09-22', '09:00', '10:00', 100, 1)",
+    ).run();
+    await env.DB.prepare("INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0)").run();
+    for (const path of ['/api/schedules', '/api/schedules/export-data', '/api/schedules/10']) {
+      const body = await (await api(path, studentCookie)).json<{ data: { teacher_name: string } | { teacher_name: string }[] }>();
+      const schedule = Array.isArray(body.data) ? body.data[0] : body.data;
+      expect(schedule.teacher_name).toBe('丁老师');
+    }
+    const admin = await (await api('/api/schedules/10', adminCookie)).json<{ data: { teacher_name: string } }>();
+    expect(admin.data.teacher_name).toBe('丁小明');
   });
 
   it('无账号姓名可先排课，账号注册后自动获得课程可见性', async () => {
@@ -176,10 +193,10 @@ describe('API 权限与幂等性', () => {
       ),
     ]);
 
-    const response = await api('/api/schedules/10', teacherCookie, {
+    const response = await api('/api/schedules/10', adminCookie, {
       method: 'PATCH',
       body: JSON.stringify({
-        studentNames: ['张三', '李四'], subject: '数学', classDate: '2026-09-22',
+        teacherName: '王老师', studentNames: ['张三', '李四'], subject: '数学', classDate: '2026-09-22',
         startTime: '09:00', endTime: '10:00', classroom: '', version: 1,
       }),
     });
@@ -202,10 +219,10 @@ describe('API 权限与幂等性', () => {
       "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0)",
     ).run();
 
-    const response = await api('/api/schedules/10', teacherCookie, {
+    const response = await api('/api/schedules/10', adminCookie, {
       method: 'PATCH',
       body: JSON.stringify({
-        studentNames: ['张三', '李四'], subject: '改名后的数学', classDate: '2026-09-22',
+        teacherName: '王老师', studentNames: ['张三', '李四'], subject: '改名后的数学', classDate: '2026-09-22',
         startTime: '09:00', endTime: '10:00', classroom: '', version: 1,
       }),
     });

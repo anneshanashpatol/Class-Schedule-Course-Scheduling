@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { calculateLessonHundredths } from '../../shared/domain';
+import { teacherNameForViewer } from '../../shared/teacherName';
 import { AppError } from '../lib/http';
 import { requireAuth, requireRole } from '../middleware/auth';
 import type { AppBindings, AuthUser } from '../types';
@@ -35,6 +36,7 @@ const filterSchema = z.object({
 type Filters = z.infer<typeof filterSchema>;
 type ScheduleRow = Record<string, unknown> & {
   id: number;
+  teacher_name: string;
   is_completed: number;
   student_names_json: string;
 };
@@ -113,10 +115,11 @@ function scheduleSelect(where: string) {
     ${where}`;
 }
 
-function normalizeSchedule(row: ScheduleRow) {
+function normalizeSchedule(row: ScheduleRow, user: AuthUser) {
   const { student_names_json, ...rest } = row;
   return {
     ...rest,
+    teacher_name: teacherNameForViewer(row.teacher_name, user.role),
     student_names: JSON.parse(student_names_json) as string[],
   };
 }
@@ -125,7 +128,7 @@ async function getScopedSchedule(db: D1Database, user: AuthUser, id: number) {
   const filters = buildWhere(user, {});
   const idClause = filters.sql ? `${filters.sql} AND s.id = ?` : 'WHERE s.id = ?';
   const row = await db.prepare(scheduleSelect(idClause)).bind(...filters.params, id).first<ScheduleRow>();
-  return row ? normalizeSchedule(row) : null;
+  return row ? normalizeSchedule(row, user) : null;
 }
 
 function studentInsert(db: D1Database, scheduleIdSql: string, studentNames: string[], scheduleId?: number) {
@@ -152,7 +155,7 @@ schedules.get('/', async (c) => {
   const result = await c.env.DB.prepare(
     `${scheduleSelect(where.sql)} ORDER BY s.class_date DESC, s.start_time ASC, s.id ASC LIMIT ? OFFSET ?`,
   ).bind(...where.params, pageSize, (page - 1) * pageSize).all<ScheduleRow>();
-  return c.json({ data: result.results.map(normalizeSchedule), meta: { page, pageSize, total: count?.total ?? 0 } });
+  return c.json({ data: result.results.map((row) => normalizeSchedule(row, user)), meta: { page, pageSize, total: count?.total ?? 0 } });
 });
 
 schedules.get('/export-data', async (c) => {
@@ -173,7 +176,7 @@ schedules.get('/export-data', async (c) => {
   const result = await c.env.DB.prepare(
     `${scheduleSelect(where.sql)} ORDER BY s.class_date ASC, s.start_time ASC, s.id ASC LIMIT ? OFFSET ?`,
   ).bind(...where.params, limit, offset).all<ScheduleRow>();
-  return c.json({ data: result.results.map(normalizeSchedule), meta: { offset, limit, hasMore: result.results.length === limit } });
+  return c.json({ data: result.results.map((row) => normalizeSchedule(row, user)), meta: { offset, limit, hasMore: result.results.length === limit } });
 });
 
 schedules.get('/:id', async (c) => {
@@ -184,11 +187,11 @@ schedules.get('/:id', async (c) => {
   return c.json({ data: row });
 });
 
-schedules.post('/', requireRole('ADMIN', 'TEACHER'), async (c) => {
+schedules.post('/', requireRole('ADMIN'), async (c) => {
   const input = scheduleInput.safeParse(await c.req.json());
   if (!input.success) throw new AppError(422, 'VALIDATION_ERROR', '排课信息有误', input.error.flatten());
   const user = c.get('user');
-  const teacherName = user.role === 'TEACHER' ? user.displayName : input.data.teacherName;
+  const teacherName = input.data.teacherName;
   if (!teacherName) throw new AppError(422, 'TEACHER_REQUIRED', '请输入教师姓名');
   const studentNames = uniqueNames(input.data.studentNames);
   const lessonHundredths = calculateLessonHundredths(input.data.startTime, input.data.endTime);
@@ -206,7 +209,7 @@ schedules.post('/', requireRole('ADMIN', 'TEACHER'), async (c) => {
   return c.json({ data: { id: Number(results[0].meta.last_row_id) } }, 201);
 });
 
-schedules.patch('/:id', requireRole('ADMIN', 'TEACHER'), async (c) => {
+schedules.patch('/:id', requireRole('ADMIN'), async (c) => {
   const id = Number(c.req.param('id'));
   const input = scheduleInput.safeParse(await c.req.json());
   if (!Number.isSafeInteger(id) || !input.success || !input.data.version) {
@@ -215,7 +218,7 @@ schedules.patch('/:id', requireRole('ADMIN', 'TEACHER'), async (c) => {
   const user = c.get('user');
   const existing = await getScopedSchedule(c.env.DB, user, id);
   if (!existing) throw new AppError(404, 'SCHEDULE_NOT_FOUND', '排课不存在');
-  const teacherName = user.role === 'TEACHER' ? user.displayName : input.data.teacherName;
+  const teacherName = input.data.teacherName;
   if (!teacherName) throw new AppError(422, 'TEACHER_REQUIRED', '请输入教师姓名');
   const studentNames = uniqueNames(input.data.studentNames);
   const existingStudentNames = existing.student_names as string[];
@@ -264,13 +267,10 @@ schedules.patch('/:id/completion', requireRole('ADMIN', 'TEACHER'), async (c) =>
   return c.json({ data: await getScopedSchedule(c.env.DB, user, id) });
 });
 
-schedules.delete('/:id', requireRole('ADMIN', 'TEACHER'), async (c) => {
+schedules.delete('/:id', requireRole('ADMIN'), async (c) => {
   const id = Number(c.req.param('id'));
   if (!Number.isSafeInteger(id)) throw new AppError(422, 'VALIDATION_ERROR', '排课 ID 无效');
-  const user = c.get('user');
-  const clause = user.role === 'TEACHER' ? 'AND teacher_name = ? COLLATE NOCASE' : '';
-  const statement = c.env.DB.prepare(`DELETE FROM schedules WHERE id = ? ${clause}`);
-  const result = await (clause ? statement.bind(id, user.displayName) : statement.bind(id)).run();
+  const result = await c.env.DB.prepare('DELETE FROM schedules WHERE id = ?').bind(id).run();
   if ((result.meta.changes ?? 0) === 0) throw new AppError(404, 'SCHEDULE_NOT_FOUND', '排课不存在');
   return c.json({ data: { success: true } });
 });

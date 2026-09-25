@@ -58,3 +58,12 @@ textarea.control { resize: vertical; }
 .student-name-list { border: 1px solid var(--line); border-radius: 7px; display: flex; flex-direction: column; gap: .6rem; padding: .8rem; }.student-name-list legend { color: #3d4a44; font-size: .82rem; font-weight: 700; padding: 0 .3rem; }.student-name-list p { color: var(--ink-muted); margin: 0; }.student-name-list > small { color: var(--ink-muted); font-size: .75rem; }.student-name-row { align-items: center; display: flex; gap: .5rem; }.student-name-row .icon-button { flex: 0 0 auto; }.student-name-list .add-student { align-self: flex-start; min-height: 36px; }
 @media (max-width: 760px) { .calendar-heading { align-items: flex-end; }.calendar-heading__range { align-items: flex-start; flex-direction: column; gap: .2rem; }.calendar-date-picker { align-items: flex-end; flex-direction: column; gap: .2rem; }.student-picker { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 430px) { .student-picker { grid-template-columns: 1fr; }.dialog-actions { flex-wrap: wrap; }.dialog-actions .dialog-delete { flex-basis: 100%; margin-right: 0; } }
+
+.course-card { font-size: .82rem; }
+.course-card strong { font-size: .98rem; }
+.course-card .course-card__teacher { color: #344d40; font-size: .87rem; font-weight: 700; }
+.course-card .course-card__students { font-size: .78rem; }
+.course-card .course-card__completed { align-items: center; align-self: flex-start; background: #d7efdc; border: 1px solid #73b987; border-radius: 999px; color: #176437; display: inline-flex; font-size: .82rem; gap: .2rem; padding: .2rem .45rem; }
+.course-card__completed svg { flex: none; }
+.row-actions .text-button { height: auto; padding: .35rem; width: auto; }
+@media (max-width: 760px) { .day-list .course-card { font-size: .88rem; } }

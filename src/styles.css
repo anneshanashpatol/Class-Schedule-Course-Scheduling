@@ -67,3 +67,22 @@ textarea.control { resize: vertical; }
 .course-card__completed svg { flex: none; }
 .row-actions .text-button { height: auto; padding: .35rem; width: auto; }
 @media (max-width: 760px) { .day-list .course-card { font-size: .88rem; } }
+
+.student-name-row .control { flex: 1 1 0; min-width: 0; width: 0; }
+.student-name-entry { display: grid; gap: .25rem; }
+.student-name-hint { color: var(--danger); font-size: .75rem; }
+.student-name-balance { background: var(--green-soft); border-radius: 6px; display: flex; flex: 0 0 136px; flex-direction: column; gap: .15rem; justify-content: center; min-height: 42px; padding: .3rem .55rem; }
+.student-name-balance small { color: var(--ink-muted); font-size: .67rem; }
+.student-name-balance strong { color: var(--green-deep); font-size: .82rem; overflow-wrap: anywhere; }
+.student-name-balance--button { border: 0; cursor: pointer; text-align: left; }
+.student-name-balance--button:hover { background: #dceee0; }
+.student-name-balance--button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.student-name-row--readonly { border-top: 1px solid var(--line); justify-content: space-between; padding-top: .6rem; }
+.student-name-row--readonly > span:first-child { color: var(--ink-muted); font-size: .82rem; }
+@media (max-width: 430px) {
+  .student-name-row:not(.student-name-row--readonly) { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .student-name-row:not(.student-name-row--readonly) .control { grid-column: 1; width: 100%; }
+  .student-name-row:not(.student-name-row--readonly) .student-name-balance { flex-basis: auto; grid-column: 1 / -1; grid-row: 2; width: 100%; }
+  .student-name-row:not(.student-name-row--readonly) .icon-button { grid-column: 2; grid-row: 1; }
+  .student-name-row--readonly .student-name-balance { flex-basis: 112px; padding-inline: .4rem; }
+}

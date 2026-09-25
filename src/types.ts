@@ -43,7 +43,7 @@ export interface UserRecord {
   remaining_hundredths?: number;
 }
 
-export interface PersonOption { id: number; name: string; subject?: string; status?: UserStatus }
+export interface PersonOption { id: number; name: string; subject?: string; status?: UserStatus; remaining_hundredths?: number | null }
 
 export interface ScheduleFilters {
   teacherName: string;

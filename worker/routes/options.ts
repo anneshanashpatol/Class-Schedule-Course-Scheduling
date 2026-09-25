@@ -9,9 +9,11 @@ options.get('/', requireAuth, async (c) => {
   const students = user.role === 'STUDENT'
     ? { results: [] }
     : await c.env.DB.prepare(
-      `SELECT id, display_name AS name, status FROM users
-       WHERE role = 'STUDENT' AND deleted_at IS NULL ${user.role === 'TEACHER' ? "AND status = 'ACTIVE'" : ''}
-       ORDER BY status ASC, display_name COLLATE NOCASE`,
+      `SELECT u.id, u.display_name AS name, u.status,
+         ${user.role === 'ADMIN' ? 'sp.remaining_hundredths' : 'NULL AS remaining_hundredths'}
+       FROM users u LEFT JOIN student_profiles sp ON sp.user_id = u.id
+       WHERE u.role = 'STUDENT' AND u.deleted_at IS NULL ${user.role === 'TEACHER' ? "AND u.status = 'ACTIVE'" : ''}
+       ORDER BY u.status ASC, u.display_name COLLATE NOCASE`,
     ).all();
   const teachers = user.role === 'ADMIN'
     ? await c.env.DB.prepare(

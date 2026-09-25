@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { canChangeCompletion } from '../../shared/completionWindow';
 import { calculateLessonHundredths } from '../../shared/domain';
 import { teacherNameForViewer } from '../../shared/teacherName';
 import { AppError } from '../lib/http';
@@ -36,6 +37,7 @@ const filterSchema = z.object({
 type Filters = z.infer<typeof filterSchema>;
 type ScheduleRow = Record<string, unknown> & {
   id: number;
+  class_date: string;
   teacher_name: string;
   is_completed: number;
   student_names_json: string;
@@ -255,6 +257,9 @@ schedules.patch('/:id/completion', requireRole('ADMIN', 'TEACHER'), async (c) =>
   const user = c.get('user');
   const existing = await getScopedSchedule(c.env.DB, user, id);
   if (!existing) throw new AppError(404, 'SCHEDULE_NOT_FOUND', '排课不存在');
+  if (!canChangeCompletion(user.role, existing.class_date)) {
+    throw new AppError(403, 'COMPLETION_WINDOW_CLOSED', '教师仅可在上课当天或次日修改完课状态，请联系管理员');
+  }
   if (Boolean(existing.is_completed) === input.data.completed) return c.json({ data: existing });
   const result = await c.env.DB.prepare(
     "UPDATE schedules SET is_completed = ?, version = version + 1, updated_at = datetime('now') WHERE id = ? AND version = ?",

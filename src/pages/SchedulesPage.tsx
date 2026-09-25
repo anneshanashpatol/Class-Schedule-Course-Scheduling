@@ -1,5 +1,6 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import dayjs from 'dayjs';
+import { canChangeCompletion } from '../../shared/completionWindow';
 import { teacherNameForViewer } from '../../shared/teacherName';
 import { Check, Download, Filter, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -31,7 +32,6 @@ export function SchedulesPage() {
   const [busy, setBusy] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canEdit = user?.role === 'ADMIN';
-  const canComplete = user?.role === 'ADMIN' || user?.role === 'TEACHER';
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -99,7 +99,7 @@ export function SchedulesPage() {
 
   const pages = Math.max(1, Math.ceil(total / pageSize));
   return <div className="page">
-    <header className="page-header"><div><p className="eyebrow">课程档案</p><h1>排课管理</h1><p>{user?.role === 'ADMIN' ? '新增、调整课程并跟进完课状态。' : user?.role === 'TEACHER' ? '查看你的课程记录并更新完课状态。' : '查看与你相关的课程记录。'}</p></div>{canEdit && <Button onClick={() => setEditing('new')}><Plus size={18} />新增排课</Button>}</header>
+    <header className="page-header"><div><p className="eyebrow">课程档案</p><h1>排课管理</h1><p>{user?.role === 'ADMIN' ? '新增、调整课程并跟进完课状态。' : user?.role === 'TEACHER' ? '查看课程记录；完课状态仅可在上课当天或次日修改。' : '查看与你相关的课程记录。'}</p></div>{canEdit && <Button onClick={() => setEditing('new')}><Plus size={18} />新增排课</Button>}</header>
     <Notice error={error} />
     <form className={`filter-panel ${filtersOpen ? '' : 'filter-panel--collapsed'}`} onSubmit={applyFilters}>
       <div className="filter-title"><span><Filter size={17} />筛选</span><button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((value) => !value)}>{filtersOpen ? '收起' : '展开'}</button></div>
@@ -114,8 +114,8 @@ export function SchedulesPage() {
     </form>
     <div className="table-toolbar"><span>共 {total} 条{selected.size > 0 && ` · 已选 ${selected.size} 条`}</span><div><Button variant="secondary" disabled={busy || total === 0} onClick={() => void exportRows()}><Download size={17} />{selected.size ? '导出选中' : '导出筛选结果'}</Button>{user?.role === 'ADMIN' && selected.size > 0 && <Button variant="danger" disabled={busy} onClick={() => void bulkDelete('ids')}><Trash2 size={17} />删除选中</Button>}{user?.role === 'ADMIN' && total > 0 && <Button variant="ghost" disabled={busy} onClick={() => void bulkDelete('filtered')}>删除全部筛选结果</Button>}</div></div>
     {loading ? <LoadingState /> : items.length === 0 ? <EmptyState title="没有符合条件的课程" text="调整筛选条件，或新建第一条排课。" action={canEdit && <Button onClick={() => setEditing('new')}>新增排课</Button>} /> : <>
-      <div className="data-table-wrap"><table className="data-table"><thead><tr>{user?.role === 'ADMIN' && <th><input type="checkbox" aria-label="选择本页全部" checked={items.every((x) => selected.has(x.id))} onChange={(e) => setSelected(e.target.checked ? new Set([...selected, ...items.map((x) => x.id)]) : new Set([...selected].filter((id) => !items.some((x) => x.id === id))))} /></th>}<th>日期 / 时间</th><th>科目</th><th>教师</th><th>学生</th><th>教室</th><th>课时</th><th>状态</th><th>操作</th></tr></thead><tbody>{items.map((item) => <ScheduleRow key={item.id} item={item} admin={user?.role === 'ADMIN'} canEdit={canEdit} canComplete={canComplete} selected={selected.has(item.id)} onSelect={(checked) => setSelected((old) => { const next = new Set(old); if (checked) next.add(item.id); else next.delete(item.id); return next; })} onEdit={() => setEditing(item)} onDelete={() => void remove(item)} onComplete={() => void toggleComplete(item)} />)}</tbody></table></div>
-      <div className="schedule-cards">{items.map((item) => <ScheduleMobileCard key={item.id} item={item} canEdit={canEdit} canComplete={canComplete} onEdit={() => setEditing(item)} onDelete={() => void remove(item)} onComplete={() => void toggleComplete(item)} />)}</div>
+      <div className="data-table-wrap"><table className="data-table"><thead><tr>{user?.role === 'ADMIN' && <th><input type="checkbox" aria-label="选择本页全部" checked={items.every((x) => selected.has(x.id))} onChange={(e) => setSelected(e.target.checked ? new Set([...selected, ...items.map((x) => x.id)]) : new Set([...selected].filter((id) => !items.some((x) => x.id === id))))} /></th>}<th>日期 / 时间</th><th>科目</th><th>教师</th><th>学生</th><th>教室</th><th>课时</th><th>状态</th><th>操作</th></tr></thead><tbody>{items.map((item) => <ScheduleRow key={item.id} item={item} admin={user?.role === 'ADMIN'} canEdit={canEdit} canComplete={canChangeCompletion(user?.role, item.class_date)} selected={selected.has(item.id)} onSelect={(checked) => setSelected((old) => { const next = new Set(old); if (checked) next.add(item.id); else next.delete(item.id); return next; })} onEdit={() => setEditing(item)} onDelete={() => void remove(item)} onComplete={() => void toggleComplete(item)} />)}</tbody></table></div>
+      <div className="schedule-cards">{items.map((item) => <ScheduleMobileCard key={item.id} item={item} canEdit={canEdit} canComplete={canChangeCompletion(user?.role, item.class_date)} onEdit={() => setEditing(item)} onDelete={() => void remove(item)} onComplete={() => void toggleComplete(item)} />)}</div>
       <div className="pagination"><label>每页 <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>{[10, 20, 50, 100].map((n) => <option key={n}>{n}</option>)}</select> 条</label><span>第 {page} / {pages} 页</span><Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</Button><Button variant="secondary" disabled={page >= pages} onClick={() => setPage(page + 1)}>下一页</Button></div>
     </>}
     <ScheduleDialog open={editing !== null} item={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onChanged={() => { setEditing(null); void load(); }} />

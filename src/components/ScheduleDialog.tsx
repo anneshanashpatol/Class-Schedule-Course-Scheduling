@@ -2,11 +2,13 @@
 import dayjs from 'dayjs';
 import { Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { canChangeCompletion } from '../../shared/completionWindow';
 import { calculateLessonHundredths, formatLessonHours } from '../../shared/domain';
 import { teacherNameForViewer } from '../../shared/teacherName';
 import { useAuth } from '../auth/AuthContext';
 import { api } from '../lib/api';
-import type { Schedule } from '../types';
+import type { AuthUser, PersonOption, Schedule } from '../types';
+import { AdjustmentDialog, type AdjustmentStudent } from './AdjustmentDialog';
 import { Button, Dialog, Field, Input, Notice } from './ui';
 
 interface Props {
@@ -36,8 +38,12 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
   const [form, setForm] = useState(blankForm(initialDate));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [studentBalances, setStudentBalances] = useState<Record<string, AdjustmentStudent> | null>(null);
+  const [balanceLoadFailed, setBalanceLoadFailed] = useState(false);
+  const [adjusting, setAdjusting] = useState<AdjustmentStudent | null>(null);
+  const [balanceHintIndex, setBalanceHintIndex] = useState<number | null>(null);
   const readOnly = user?.role !== 'ADMIN';
-  const canComplete = user?.role === 'ADMIN' || user?.role === 'TEACHER';
+  const canComplete = Boolean(item && canChangeCompletion(user?.role, item.class_date));
   const locked = Boolean(item?.is_completed);
   const lessonHundredths = useMemo(() => {
     try { return calculateLessonHundredths(form.startTime, form.endTime); } catch { return 0; }
@@ -51,13 +57,49 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
       endTime: item.end_time, classroom: item.classroom,
     } : blankForm(initialDate));
     setError('');
+    setBalanceHintIndex(null);
   }, [item, initialDate, open]);
 
+  useEffect(() => {
+    if (!open || (user?.role !== 'ADMIN' && user?.role !== 'STUDENT')) return;
+    let active = true;
+    setStudentBalances(null);
+    setBalanceLoadFailed(false);
+    if (user.role === 'ADMIN') {
+      api<{ students: PersonOption[] }>('/schedule-options').then(({ students }) => {
+        if (active) setStudentBalances(Object.fromEntries(students
+          .filter((student) => student.remaining_hundredths != null)
+          .map((student) => [student.name.trim().toLocaleLowerCase(), { id: student.id, name: student.name, remainingHundredths: student.remaining_hundredths as number }])));
+      }).catch(() => { if (active) setBalanceLoadFailed(true); });
+    } else {
+      api<AuthUser>('/auth/me').then((profile) => {
+        if (active) setStudentBalances(profile.remainingHundredths === undefined ? {} : {
+          [profile.displayName.trim().toLocaleLowerCase()]: { id: profile.id, name: profile.displayName, remainingHundredths: profile.remainingHundredths },
+        });
+      }).catch(() => { if (active) setBalanceLoadFailed(true); });
+    }
+    return () => { active = false; };
+  }, [open, user?.role]);
+
+  function balanceText(name: string) {
+    if (!name.trim()) return '—';
+    if (balanceLoadFailed) return '读取失败';
+    if (!studentBalances) return '读取中…';
+    const student = studentBalances[name.trim().toLocaleLowerCase()];
+    return student === undefined ? '暂无数据' : `${formatLessonHours(student.remainingHundredths)} 课时`;
+  }
+
+  function balanceStudent(name: string) {
+    return studentBalances?.[name.trim().toLocaleLowerCase()];
+  }
+
   function changeStudent(index: number, value: string) {
+    setBalanceHintIndex(null);
     setForm((current) => ({ ...current, studentNames: current.studentNames.map((name, position) => position === index ? value : name) }));
   }
 
   function removeStudent(index: number) {
+    setBalanceHintIndex(null);
     setForm((current) => ({ ...current, studentNames: current.studentNames.filter((_, position) => position !== index) }));
   }
 
@@ -104,7 +146,7 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
     finally { setBusy(false); }
   }
 
-  return <Dialog title={!item ? '新增排课' : readOnly ? '课程详情' : '编辑排课'} open={open} onClose={onClose} wide>
+  return <><Dialog title={!item ? '新增排课' : readOnly ? '课程详情' : '编辑排课'} open={open && !adjusting} onClose={onClose} wide>
     <form className="dialog-form" onSubmit={submit}>
       <Notice error={error} />
       {locked && !readOnly && <div className="notice">已完课课程的学生和时间已锁定。如需调整，请先取消完课。</div>}
@@ -118,19 +160,29 @@ export function ScheduleDialog({ open, item, initialDate, onClose, onChanged }: 
         <Field label="自动课时"><Input disabled value={lessonHundredths ? `${formatLessonHours(lessonHundredths)} 课时` : '时间无效'} /></Field>
         <Field label="教室"><Input disabled={readOnly} maxLength={100} value={form.classroom} onChange={(event) => setForm({ ...form, classroom: event.target.value })} placeholder="可不填" /></Field>
       </div>
-      <fieldset className="student-name-list" disabled={readOnly || locked}>
+      <fieldset className="student-name-list" disabled={readOnly}>
         <legend>学生姓名</legend>
-        {readOnly ? <p>{item ? scheduleStudentNames(item).join('、') : ''}</p> : <>
-          {form.studentNames.map((name, index) => <div className="student-name-row" key={index}>
-            <Input required maxLength={40} aria-label={`学生姓名 ${index + 1}`} value={name} onChange={(event) => changeStudent(index, event.target.value)} placeholder={`输入第 ${index + 1} 名学生姓名`} />
-            {form.studentNames.length > 1 && <button type="button" className="icon-button bordered" aria-label={`移除第 ${index + 1} 名学生`} onClick={() => removeStudent(index)}><X size={17} /></button>}
+        {readOnly ? <>
+          <p>{item ? scheduleStudentNames(item).join('、') : ''}</p>
+          {user?.role === 'STUDENT' && item && <div className="student-name-row student-name-row--readonly"><span>我的课时</span><span className="student-name-balance"><small>预计剩余</small><strong>{balanceText(user.displayName)}</strong></span></div>}
+        </> : <>
+          {form.studentNames.map((name, index) => <div className="student-name-entry" key={index}>
+            <div className="student-name-row">
+              <Input required disabled={locked} maxLength={40} aria-label={`学生姓名 ${index + 1}`} value={name} onChange={(event) => changeStudent(index, event.target.value)} placeholder={`输入第 ${index + 1} 名学生姓名`} />
+              {balanceStudent(name) ? <button type="button" className="student-name-balance student-name-balance--button" aria-label={`调整${name}的课时`} onClick={() => setAdjusting(balanceStudent(name) ?? null)}><small>预计剩余</small><strong>{balanceText(name)}</strong></button> : name.trim() && studentBalances && !balanceLoadFailed ? <button type="button" className="student-name-balance student-name-balance--button" aria-label={`${name}尚无学生账号`} onClick={() => setBalanceHintIndex(index)}><small>预计剩余</small><strong>暂无账号</strong></button> : <span className="student-name-balance"><small>预计剩余</small><strong>{balanceText(name)}</strong></span>}
+              {form.studentNames.length > 1 && <button type="button" disabled={locked} className="icon-button bordered" aria-label={`移除第 ${index + 1} 名学生`} onClick={() => removeStudent(index)}><X size={17} /></button>}
+            </div>
+            {balanceHintIndex === index && <small className="student-name-hint" role="status">请先在用户管理添加该学生。</small>}
           </div>)}
-          <Button type="button" variant="secondary" className="add-student" onClick={() => setForm((current) => ({ ...current, studentNames: [...current.studentNames, ''] }))}><Plus size={16} />添加学生</Button>
+          <Button type="button" variant="secondary" className="add-student" disabled={locked} onClick={() => setForm((current) => ({ ...current, studentNames: [...current.studentNames, ''] }))}><Plus size={16} />添加学生</Button>
           <small>姓名对应的账号尚未注册也可以保存；账号注册后会自动看到课程。</small>
         </>}
       </fieldset>
-      <div className="completion-row"><div><strong>是否完课</strong><span>{item ? '切换后会立即扣减或返还全部学生的课时' : '新建课程默认为未完课'}</span></div><button type="button" role="switch" aria-label="是否完课" aria-checked={Boolean(item?.is_completed)} className={`switch ${item?.is_completed ? 'switch--on' : ''}`} disabled={!item || !canComplete || busy} onClick={() => void toggleCompletion()}><span /></button></div>
+      <div className="completion-row"><div><strong>是否完课</strong><span>{user?.role === 'TEACHER' && item && !canComplete ? '仅可在上课当天或次日修改；其他时间请联系管理员' : item ? '切换后会立即扣减或返还全部学生的课时' : '新建课程默认为未完课'}</span></div><button type="button" role="switch" aria-label="是否完课" aria-checked={Boolean(item?.is_completed)} className={`switch ${item?.is_completed ? 'switch--on' : ''}`} disabled={!canComplete || busy} onClick={() => void toggleCompletion()}><span /></button></div>
       <footer className="dialog-actions">{item && !readOnly && <Button type="button" variant="danger" className="dialog-delete" disabled={busy} onClick={() => void remove()}><Trash2 size={16} />删除课程</Button>}<Button type="button" variant="secondary" onClick={onClose}>{readOnly ? '关闭' : '取消'}</Button>{!readOnly && <Button disabled={busy}>{busy ? '保存中…' : '保存'}</Button>}</footer>
     </form>
-  </Dialog>;
+  </Dialog><AdjustmentDialog item={adjusting} onClose={() => setAdjusting(null)} onSaved={(remainingHundredths) => {
+    if (adjusting) setStudentBalances((current) => current && { ...current, [adjusting.name.trim().toLocaleLowerCase()]: { ...adjusting, remainingHundredths } });
+    setAdjusting(null);
+  }} /></>;
 }

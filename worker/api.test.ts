@@ -41,6 +41,15 @@ describe('API 权限与幂等性', () => {
     studentCookie = await cookieFor(3, 'student-token');
   });
 
+  it('预计剩余课时只提供给管理员和学生本人', async () => {
+    const adminOptions = await (await api('/api/schedule-options', adminCookie)).json<{ data: { students: { name: string; remaining_hundredths: number | null }[] } }>();
+    expect(adminOptions.data.students.find((student) => student.name === '张三')?.remaining_hundredths).toBe(1000);
+    const teacherOptions = await (await api('/api/schedule-options', teacherCookie)).json<{ data: { students: { remaining_hundredths: number | null }[] } }>();
+    expect(teacherOptions.data.students[0]?.remaining_hundredths).toBeNull();
+    const studentProfile = await (await api('/api/auth/me', studentCookie)).json<{ data: { remainingHundredths: number } }>();
+    expect(studentProfile.data.remainingHundredths).toBe(1000);
+  });
+
   it('教师不能新增、编辑或删除课程', async () => {
     const response = await api('/api/schedules', teacherCookie, {
       method: 'POST',
@@ -133,9 +142,10 @@ describe('API 权限与幂等性', () => {
   });
 
   it('重复完课请求只扣减一次余额', async () => {
+    const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
     await env.DB.prepare(
-      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', '2026-09-22', '09:00', '10:30', 150, 1)",
-    ).run();
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', ?, '09:00', '10:30', 150, 1)",
+    ).bind(today).run();
     await env.DB.prepare(
       "INSERT INTO schedule_students (schedule_id, student_name, position) VALUES (10, '张三', 0), (10, '李四', 1)",
     ).run();
@@ -154,6 +164,15 @@ describe('API 权限与幂等性', () => {
       { user_id: 3, remaining_hundredths: 850 },
       { user_id: 5, remaining_hundredths: 850 },
     ]);
+  });
+
+  it('过期课程只允许管理员修改完课状态', async () => {
+    await env.DB.prepare(
+      "INSERT INTO schedules (id, teacher_name, subject, class_date, start_time, end_time, lesson_hundredths, created_by) VALUES (10, '王老师', '数学', '2020-01-01', '09:00', '10:00', 100, 1)",
+    ).run();
+    const request = { method: 'PATCH', body: JSON.stringify({ completed: true, version: 1 }) };
+    expect((await api('/api/schedules/10/completion', teacherCookie, request)).status).toBe(403);
+    expect((await api('/api/schedules/10/completion', adminCookie, request)).status).toBe(200);
   });
 
   it('多学生创建失败时原子回滚课程和成员', async () => {

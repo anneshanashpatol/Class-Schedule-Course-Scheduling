@@ -31,6 +31,10 @@ npm run test:e2e
 
 本地 D1 数据保存在 `.wrangler/`，不会提交到 Git。若迁移有变化，再执行 `npm run db:migrate:local`。
 
+### 课程表改版的隔离预览
+
+在项目根目录运行 `node scripts/prepare-calendar-preview.mjs`，再进入 `.calendar-preview` 执行 `npm run dev -- --host 127.0.0.1 --port 4174`，打开 `http://127.0.0.1:4174/login`。演示管理员为 `e2e_admin`，密码为 `e2e-pass-123`。演示库包含普通多人课程、次日18节课程（上午16节、下午2节），以及下一周两节常规课程；可点“下一周”对比正常密度。预览目录有独立的本地 D1，重复准备会重置其中的演示账号和排课；它不连接生产 D1，也不改项目根目录现有的 `.wrangler` 数据。
+
 ## 业务约定
 
 - 姓名就是唯一登录账号；重名用户需要自行添加后缀。

@@ -276,3 +276,11 @@ https://course-scheduler.<你的子域>.workers.dev
 - D1 做重要变更前先备份。
 
 Cloudflare 后台菜单可能小幅调整；文字不同时，以 **Workers、Builds、Variables and secrets、Bindings、D1、Import a repository** 这些入口定位。
+
+## 十五、课程表月视图更新（2026-09-26）
+
+本次更新只修改前端页面、样式和导航外链；D1 表结构、`DB` 绑定、Worker 名称、会话规则及构建命令均保持原样。先在本地隔离预览检查七列周视图、月视图和18节密集排课，再按第十节从原仓库更新 `main`。Cloudflare Builds 继续使用 `npm run cf:build` 和 `npm run cf:deploy`；这次不新增迁移，迁移命令应提示没有待执行迁移。发布后以原账号登录，核对历史课程、月周切换、手机单日视图和“排课 AI 助手”新标签页入口。出现问题时在 Worker 的 Deployments 回退到前一版本，保留原 D1；回退后再次检查登录和历史课程。
+
+月视图最多读取42天的课程，按500条分页。以每天18节为上限估算，单次打开最多读取756条、发起两次课程 API 请求；实际扫描量还受索引、学生关联和其他筛选影响，应在 Cloudflare D1 的 Metrics → Row Metrics 查看真实用量。截至2026-09-26，[Workers Free](https://developers.cloudflare.com/workers/platform/pricing/) 为每天10万次请求、单次10毫秒 CPU；[D1 Free](https://developers.cloudflare.com/d1/platform/pricing/) 为每天500万行读取、10万行写入、总存储5 GB，额度与同一账号其他项目共享。静态资源请求有单独规则，见 [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/)。这属于小型机构的容量估算，不保证任意规模下始终免费。
+
+项目没有 Service Worker 或自建 API 缓存，前端资源由构建生成带哈希的文件名；正常发布后刷新页面即可取得新版本。若目标域名额外设置了缓存规则，应核查它是否缓存了 HTML，再按实际规则处理。

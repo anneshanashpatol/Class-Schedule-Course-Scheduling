@@ -43,9 +43,7 @@ test.describe.serial('新需求核心流程', () => {
 
     const now = new Date();
     await expect(page.locator('.calendar-heading strong')).toHaveText(`${now.getFullYear()}年${now.getMonth() + 1}月`);
-    await expect(page.getByRole('heading', { name: '上午', exact: true })).toHaveCount(1);
-    await expect(page.getByRole('heading', { name: '下午', exact: true })).toHaveCount(1);
-
+    await expect(page.locator('.week-grid__dates > header')).toHaveCount(7);
     await page.getByRole('button', { name: `在${now.getMonth() + 1}月${now.getDate()}日上午新增排课`, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '新增排课' });
     await dialog.getByLabel('教师姓名').fill('e2e_王老师');
@@ -67,7 +65,7 @@ test.describe.serial('新需求核心流程', () => {
     await expect(editDialog.getByRole('switch')).toHaveAttribute('aria-checked', 'false');
     await editDialog.getByRole('switch').click();
 
-    await expect(course).toContainText('已完课');
+    await expect(course).toHaveAttribute('aria-label', /已完课/);
     await course.click();
     page.once('dialog', (confirmation) => confirmation.accept());
     await page.getByRole('dialog', { name: '编辑排课' }).getByRole('button', { name: '删除课程' }).click();

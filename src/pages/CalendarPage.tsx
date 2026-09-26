@@ -119,7 +119,7 @@ export function CalendarPage() {
           </button>;
         })}</div>
         {focusedDay && <div className="month-calendar__focus-list" role="tooltip"><strong>{dayjs(focusedDay).format('M月D日')} · 学生名单</strong><span>{dailyStudentNames(byDate[focusedDay] ?? []).join('、') || '暂无课程'}</span></div>}
-      </div> : <div className={`week-grid week-grid--compact${weekDays.some((date) => (byDate[date.format('YYYY-MM-DD')] ?? []).length >= 10) ? ' week-grid--busy' : ''}`} aria-label="周课程表">
+      </div> : <div className={`week-grid week-grid--compact${weekDays.some((date) => periods.some((period) => (byDate[date.format('YYYY-MM-DD')] ?? []).filter(period.matches).length >= 12)) ? ' week-grid--busy' : ''}`} aria-label="周课程表">
         <div className="week-grid__dates">{weekDays.map((date) => <header key={date.format('YYYY-MM-DD')} className={`${date.isSame(dayjs(), 'day') ? 'today' : ''}${date.format('YYYY-MM-DD') === activeDateKey ? ' selected' : ''}`}><span>{date.format('ddd')}</span><strong>{date.format('D')}</strong><small>{(byDate[date.format('YYYY-MM-DD')] ?? []).length} 节课</small></header>)}</div>
         {periods.map((period) => <section className="week-period-row" key={period.key}>
           <h2 aria-label={period.label}><span aria-hidden="true">{period.label[0]}</span><span aria-hidden="true">{period.label[1]}</span></h2>
@@ -137,16 +137,15 @@ export function CalendarPage() {
 
 function CompactCourseCard({ item, onOpen }: { item: Schedule; onOpen: () => void }) {
   const { user } = useAuth();
-  const teacher = teacherNameForViewer(item.teacher_name, 'STUDENT');
+  const teacher = teacherNameForViewer(item.teacher_name, 'STUDENT').replace(/老师$/, '');
   const details = `${item.start_time}–${item.end_time} ${item.subject}\n学生：${item.student_names.join('、')}\n教师：${teacherNameForViewer(item.teacher_name, user?.role)}${item.classroom ? `\n教室：${item.classroom}` : ''}\n${item.is_completed ? '已完课' : '待上课'}`;
   return <button type="button" className={`compact-course compact-course--${subjectColor(item.subject)}`} onClick={(event) => { event.stopPropagation(); onOpen(); }} title={details} aria-label={details.replaceAll('\n', '，')}>
-    <span className="compact-course__top"><time>{item.start_time}–{item.end_time}</time><strong title={item.subject}>{shortSubject(item.subject)}</strong><span className="compact-course__teacher">{teacher}</span>{item.is_completed ? <Check size={13} aria-label="已完课" /> : null}</span>
-    <span className="compact-course__bottom"><span className="compact-course__students" title={item.student_names.join('、')}>{compactStudentNames(item)}</span></span>
+    <span className="compact-course__line"><time>{item.start_time}–{item.end_time}</time><strong title={item.subject}>{shortSubject(item.subject)}</strong><span className="compact-course__students" title={item.student_names.join('、')}>{compactStudentNames(item)}</span><span className="compact-course__teacher" title={`${teacher}老师`}>{teacher}</span>{item.is_completed ? <Check size={14} aria-label="已完课" /> : null}</span>
   </button>;
 }
 
 function CalendarPeriod({ label, hideLabel = false, compact = false, items, canEdit, onBlank, onOpen }: { label: string; hideLabel?: boolean; compact?: boolean; items: Schedule[]; canEdit: boolean; onBlank: () => void; onOpen: (item: Schedule) => void }) {
-  return <section className={`calendar-period ${canEdit ? 'calendar-period--editable' : ''}`} onClick={() => canEdit && onBlank()}>
+  return <section className={`calendar-period ${canEdit ? 'calendar-period--editable' : ''}${compact ? ` calendar-period--${items.length <= 3 ? 'few' : items.length <= 6 ? 'medium' : 'many'}` : ''}`} onClick={() => canEdit && onBlank()}>
     {!hideLabel && <h3>{label}</h3>}
     <div className="calendar-period__body">{items.length ? <>{items.map((item) => compact ? <CompactCourseCard key={item.id} item={item} onOpen={() => onOpen(item)} /> : <CourseCard key={item.id} item={item} onOpen={() => onOpen(item)} />)}{compact && canEdit && <button type="button" className="calendar-period__add" aria-label={`在${label}新增排课`} onClick={(event) => { event.stopPropagation(); onBlank(); }}><Plus size={15} /></button>}</> : canEdit ? <button type="button" className="calendar-empty calendar-empty--add" aria-label={`在${label}新增排课`} onClick={(event) => { event.stopPropagation(); onBlank(); }}><Plus size={22} strokeWidth={1.5} /></button> : <span className="calendar-empty">暂无课程</span>}</div>
   </section>;
